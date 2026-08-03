@@ -24,7 +24,7 @@
 ### Быстрый запуск в 1 команду:
 
 ```bash
-git clone https://github.com/USERNAME/antigravity-cli-unlocker.git
+git clone https://github.com/NakishN/antigravity-cli-unlocker.git
 cd antigravity-cli-unlocker
 chmod +x antigravity_unlock_linux.sh
 ./antigravity_unlock_linux.sh
@@ -71,9 +71,22 @@ Set-ExecutionPolicy Unrestricted -Scope Process -Force
 
 ---
 
+## 💬 Вопросы, проблемы и багрепорты (Troubleshooting & Issues)
+
+Если у вас возникла ошибка при разблокировке, не находится бинарник или изменилась версия Google Antigravity:
+
+👉 **[Задать вопрос или задать тикет в GitHub Issues](https://github.com/NakishN/antigravity-cli-unlocker/issues)**
+
+При возникновении проблем приложите к вашему вопросу:
+1. Вашу операционную систему (Ubuntu 24.04, Windows 11 и т.д.).
+2. Вывод команды `agy --version`.
+3. Текст ошибки из консоли.
+
+---
+
 ## ❓ Часто задаваемые вопросы (FAQ)
 
-### 1. Будет ли это работать с обычными версии Antigravity (IDE / Antigravity 2.0)?
+### 1. Будет ли это работать с обычными версиями Antigravity (IDE / Antigravity 2.0)?
 **Да, 100%!**
 - **Antigravity CLI (`agy`)**: Разблокируется полностью — поддерживаются все модели (Claude 3.7 Sonnet / Gemini 3.6 Flash / Pro), вызов подагентов, фоновые задачи, генерация артефактов и инструментов.
 - **Antigravity IDE и Antigravity 2.0 (Desktop App)**: Так как Antigravity IDE использует системный стек сетевых запросов и Electron, установленные правила Smart DNS на уровне системы (`systemd-resolved` в Linux или сетевой адаптер в Windows) автоматически перенаправляют соединения IDE и приложения 2.0 к серверам Google API без блокировок.

@@ -8,6 +8,8 @@ param (
     [switch]$Restore
 )
 
+$IssuesUrl = "https://github.com/NakishN/antigravity-cli-unlocker/issues"
+
 $Host.UI.RawUI.ForegroundColor = 'Cyan'
 Write-Host "╔══════════════════════════════════════════════════════════════════╗"
 Write-Host "║        🚀  Antigravity CLI Unlocker v2.1 (Windows)              ║"
@@ -20,6 +22,11 @@ $BackupDir = Join-Path $env:LOCALAPPDATA "antigravity-unlocker"
 $BackupFile = Join-Path $BackupDir "agy.exe.original.bak"
 $DnsPrimary = "111.88.96.50"
 $DnsSecondary = "111.88.96.51"
+
+function Show-IssuesHelp {
+    Write-Host "`n [💬] Если у вас возникла проблема, воспользуйтесь разделом Вопросов:" -ForegroundColor Yellow
+    Write-Host "     $IssuesUrl`n" -ForegroundColor Cyan
+}
 
 # ── Поиск agy.exe ──────────────────────────────────────────────────────
 function Find-AgyBinary {
@@ -49,7 +56,6 @@ if ($Restore) {
         Write-Host "[⚠] Файл резервной копии не найден." -ForegroundColor Yellow
     }
 
-    # Сброс DNS к автоматическому (DHCP)
     try {
         $Adapter = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
         if ($Adapter) {
@@ -72,6 +78,7 @@ $AgyPath = Find-AgyBinary
 if (-not $AgyPath) {
     Write-Host "[✗] agy.exe не найден на ПК!" -ForegroundColor Red
     Write-Host " Установите Antigravity CLI или добавьте путь в PATH." -ForegroundColor Yellow
+    Show-IssuesHelp
     exit 1
 }
 
@@ -139,11 +146,9 @@ if ($PyRes -like "OK:*") {
 } elseif ($PyRes -eq "MISSING") {
     Write-Host " [⚠] Сигнатура не найдена (возможно, agy.exe уже пропатчен или обновлен)." -ForegroundColor Yellow
 } else {
-    Write-Host " [⚠] Пропуск патча через Python (Python не найден). Выполнение патча через PowerShell..." -ForegroundColor Yellow
-    # Фоллбэк патч байтов через PowerShell
+    Write-Host " [⚠] Пропуск патча через Python. Выполнение патча через PowerShell..." -ForegroundColor Yellow
     try {
         $Bytes = [System.IO.File]::ReadAllBytes($AgyPath)
-        $Pattern = [byte[]](0x48, 0x85, 0xC0, 0x0F, 0x84)
         $Patched = $false
         for ($i = 0; $i -lt ($Bytes.Length - 15); $i++) {
             if ($Bytes[$i] -eq 0x80 -and $Bytes[$i+1] -eq 0x78 -and $Bytes[$i+2] -eq 0x08 -and $Bytes[$i+3] -eq 0x00 -and $Bytes[$i+4] -eq 0x0F -and $Bytes[$i+5] -eq 0x85) {
@@ -162,6 +167,7 @@ if ($PyRes -like "OK:*") {
         }
     } catch {
         Write-Host " [✗] Ошибка при записи agy.exe. Закройте agy и заново запустите скрипт." -ForegroundColor Red
+        Show-IssuesHelp
     }
 }
 
@@ -186,6 +192,7 @@ if (-not $isAdmin) {
         }
     } catch {
         Write-Host " [✗] Ошибка установки DNS: $_" -ForegroundColor Red
+        Show-IssuesHelp
     }
 }
 
@@ -194,3 +201,4 @@ Write-Host "║       ✅  Успешно! Antigravity CLI (agy.exe) разбл�
 Write-Host "╚══════════════════════════════════════════════════════════════════╝`n" -ForegroundColor Green
 Write-Host "  Запуск: agy" -ForegroundColor White
 Write-Host "  Откат:  .\antigravity_unlock_windows.ps1 -Restore" -ForegroundColor Gray
+Write-Host "  Поддержка и Вопросы: $IssuesUrl" -ForegroundColor Cyan

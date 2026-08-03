@@ -17,6 +17,8 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
+ISSUES_URL="https://github.com/NakishN/antigravity-cli-unlocker/issues"
+
 # ── Пути и константы ───────────────────────────────────────────────────
 AGY_BIN=""
 BACKUP_DIR="$HOME/.local/share/antigravity-unlocker"
@@ -42,6 +44,13 @@ warn() { echo -e "  ${YELLOW}⚠${NC}  $*"; }
 err()  { echo -e "  ${RED}✗${NC} $*"; }
 info() { echo -e "  ${BLUE}→${NC} $*"; }
 step() { echo -e "\n${BOLD}${MAGENTA}[$1/3]${NC} ${BOLD}$2${NC}"; }
+
+print_issues_help() {
+    echo ""
+    echo -e "  ${YELLOW}💬 Если возникла проблема, задайте вопрос в GitHub Issues:${NC}"
+    echo -e "  ${CYAN}${BOLD}$ISSUES_URL${NC}"
+    echo ""
+}
 
 get_agy_version() {
     local bin="${1:-$AGY_BIN}"
@@ -76,6 +85,7 @@ step_backup() {
         err "Исполняемый файл agy не найден в системе!"
         info "Установите Antigravity CLI с https://antigravity.google/docs"
         info "или укажите путь: AGY_BIN=/path/to/agy $0"
+        print_issues_help
         exit 1
     fi
 
@@ -190,10 +200,12 @@ PYEOF
         MISSING)
             err "Сигнатуры регионального блока не найдены (возможно, новая версия agy)."
             info "Проверьте текущую версию: agy --version"
+            print_issues_help
             ;;
         ERROR)
             err "Ошибка при записи пропатченного файла: ${result#ERROR:}"
             warn "Убедитесь, что agy не запущен в данный момент."
+            print_issues_help
             ;;
     esac
 }
@@ -246,16 +258,8 @@ EOF
     else
         rm -f "$tmp_conf"
         err "Не удалось автоматически применить настройки DNS."
-        warn "Вы можете выполнить настройку вручную:"
-        echo ""
-        echo "    sudo mkdir -p $conf_dir"
-        echo "    sudo tee $conf_file << 'DNSEOF'"
-        echo "    [Resolve]"
-        echo "    DNS=$DNS_PRIMARY $DNS_SECONDARY"
-        echo "    Domains=~googleapis.com ~googleusercontent.com ~accounts.google.com"
-        echo "    DNSEOF"
-        echo "    sudo systemctl restart systemd-resolved"
-        echo ""
+        warn "Вы можете выполнить настройку вручную или открыть Вопрос на GitHub:"
+        print_issues_help
     fi
 
     sleep 1
@@ -317,6 +321,7 @@ main() {
     echo -e "  ${DIM}• При обновлении agy: заново запустите этот скрипт${NC}"
     echo -e "  ${DIM}• Откат изменений:   bash \"$(realpath "$0")\" --restore${NC}"
     echo -e "  ${DIM}• Резервная копия:   $BACKUP_FILE${NC}"
+    echo -e "  ${CYAN}• Поддержка и Вопросы: $ISSUES_URL${NC}"
     echo ""
 }
 
