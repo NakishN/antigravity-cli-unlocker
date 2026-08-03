@@ -1,0 +1,7 @@
+*.tmp
+*.tmp_patch
+*.bak
+__pycache__/
+.DS_Store
+.idea/
+.vscode/
