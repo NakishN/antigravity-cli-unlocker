@@ -1,27 +1,34 @@
-# 🚀 Google Antigravity CLI Unlocker (Linux & Windows)
+# Antigravity CLI Unlocker
 
-![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-blue)
-![License](https://img.shields.io/badge/License-MIT-green)
-![AGY Version](https://img.shields.io/badge/Antigravity_CLI-v1.x--v2.x-brightgreen)
-![No VPN Required](https://img.shields.io/badge/VPN-Not_Required-orange)
-
-Инструмент для разблокировки и полноценного использования **Google Antigravity CLI (`agy`)**, **Antigravity IDE** и **Antigravity 2.0** без использования VPN в регионах с ограничениями (РФ и РБ).
+Antigravity CLI Unlocker provides regional unlock and DNS routing for **Google Antigravity CLI (`agy`)**, **Antigravity IDE**, and **Antigravity 2.0** on Linux and Windows platforms without requiring a VPN.
 
 ---
 
-## ⚡ Особенности и возможности
+## Overview
 
-- 🔓 **Работа без VPN**: Запросы к `generativelanguage.googleapis.com` и авторизации Google перенаправляются через проверенные маршруты Smart DNS (`111.88.96.50` / `111.88.96.51`).
-- 🛠 **Патч регионального блока (Eligibility Gate)**: Автоматическое снятие геоблока в бинарном коде `agy` / `agy.exe` (x64 и ARM64).
-- 💾 **Автоматический бэкап**: Перед внесением изменений всегда создается резервная копия оригинального бинарника.
-- 🔄 **Безопасный откат (`--restore`)**: Возможность мгновенно отменить все изменения и вернуть систему в исходное состояние одной командой.
-- 💻 **Кроссплатформенность**: Поддержка **Ubuntu 24.04 / Debian / Arch / Fedora** и **Windows 10 / 11**.
+In restricted regions, direct connections to Google Generative AI endpoints (`generativelanguage.googleapis.com`) and authentication gateways are restricted at the edge network level. Antigravity CLI Unlocker resolves this by:
+
+1. **Binary Gate Patching**: Removing internal regional eligibility checks in the compiled `agy` / `agy.exe` binary (x64 and ARM64).
+2. **System DNS Routing**: Routing Google API hostnames through Smart DNS gateways (`111.88.96.50` / `111.88.96.51`).
 
 ---
 
-## 🐧 Инструкция по установке на Linux (Ubuntu / Debian / Arch)
+## Features at a Glance
 
-### Быстрый запуск в 1 команду:
+| Feature | Antigravity CLI Unlocker |
+| :--- | :--- |
+| **Supported Platforms** | Ubuntu 24.04, Debian, Arch Linux, Fedora, Windows 10, Windows 11 |
+| **Target Surfaces** | Antigravity CLI (`agy`), Antigravity IDE, Antigravity 2.0 |
+| **Requirements** | No VPN required |
+| **Safety** | Automated binary backups before patching, one-command rollback (`--restore`) |
+
+---
+
+## Installation & Setup
+
+### Linux (Ubuntu / Debian / Arch)
+
+Run the installation script:
 
 ```bash
 git clone https://github.com/NakishN/antigravity-cli-unlocker.git
@@ -30,23 +37,22 @@ chmod +x antigravity_unlock_linux.sh
 ./antigravity_unlock_linux.sh
 ```
 
-### Что делает скрипт на Linux:
-1. Автоматически находит исполняемый файл `agy` в `~/.local/bin/agy` или `/usr/local/bin/agy`.
-2. Создает резервную копию в `~/.local/share/antigravity-unlocker/agy.original.bak`.
-3. Применяет бинарный патч снимка x64 / ARM64.
-4. Настраивает `systemd-resolved` (`/etc/systemd/resolved.conf.d/antigravity-unlock.conf`) для прозрачной маршрутизации доменов Google через Smart DNS.
+#### Automated Operations:
+- Locates the `agy` binary (`~/.local/bin/agy` or `/usr/local/bin/agy`).
+- Creates a backup at `~/.local/share/antigravity-unlocker/agy.original.bak`.
+- Applies machine code patches for x64 and ARM64 eligibility gates.
+- Configures `systemd-resolved` (`/etc/systemd/resolved.conf.d/antigravity-unlock.conf`) to handle DNS resolution for Google API endpoints.
 
 ---
 
-## 🪟 Инструкция по установке на Windows (10 / 11)
+### Windows (10 / 11)
 
-### Способ 1 (через Batch-файловый запуск):
-1. Скачайте репозиторий (или файлы `antigravity_unlock_windows.bat` и `antigravity_unlock_windows.ps1`).
-2. Нажмите правой кнопкой мыши по **`antigravity_unlock_windows.bat`** ➔ **«Запуск от имени Администратора»**.
-3. Скрипт сам выполнит бэкап, патч `agy.exe` и применит настройки DNS.
+#### Method 1: Batch Launcher (Recommended)
+1. Download or clone the repository.
+2. Right-click **`antigravity_unlock_windows.bat`** and select **Run as administrator**.
 
-### Способ 2 (через PowerShell):
-Откройте **PowerShell от имени Администратора** и выполните:
+#### Method 2: PowerShell (Administrator)
+Open PowerShell as Administrator and run:
 
 ```powershell
 Set-ExecutionPolicy Unrestricted -Scope Process -Force
@@ -55,46 +61,46 @@ Set-ExecutionPolicy Unrestricted -Scope Process -Force
 
 ---
 
-## 🔄 Как откатить изменения (Restore / Uninstall)
+## Rollback & Uninstallation
 
-Если вы хотите вернуть оригинальный файл `agy` и стандартные настройки DNS:
+To restore the original binary and remove system DNS configurations:
 
-### На Linux:
+### Linux
 ```bash
 ./antigravity_unlock_linux.sh --restore
 ```
 
-### На Windows:
+### Windows
 ```powershell
 .\antigravity_unlock_windows.ps1 -Restore
 ```
 
 ---
 
-## 💬 Вопросы, проблемы и багрепорты (Troubleshooting & Issues)
+## Technical Integration & Compatibility
 
-Если у вас возникла ошибка при разблокировке, не находится бинарник или изменилась версия Google Antigravity:
+### Antigravity IDE & Antigravity 2.0
+System-level DNS configuration (`systemd-resolved` on Linux or Network Adapter DNS on Windows) automatically applies to all Electron and Chromium network contexts used by Antigravity IDE and Antigravity 2.0. Consequently, all surfaces function seamlessly without additional configuration.
 
-👉 **[Задать вопрос или задать тикет в GitHub Issues](https://github.com/NakishN/antigravity-cli-unlocker/issues)**
-
-При возникновении проблем приложите к вашему вопросу:
-1. Вашу операционную систему (Ubuntu 24.04, Windows 11 и т.д.).
-2. Вывод команды `agy --version`.
-3. Текст ошибки из консоли.
+### Post-Update Re-application
+When updating `agy` via `agy update`, Google replaces the binary. Run the unlock script again after any updates to re-apply the machine code patch.
 
 ---
 
-## ❓ Часто задаваемые вопросы (FAQ)
+## Support & Troubleshooting
 
-### 1. Будет ли это работать с обычными версиями Antigravity (IDE / Antigravity 2.0)?
-**Да, 100%!**
-- **Antigravity CLI (`agy`)**: Разблокируется полностью — поддерживаются все модели (Claude 3.7 Sonnet / Gemini 3.6 Flash / Pro), вызов подагентов, фоновые задачи, генерация артефактов и инструментов.
-- **Antigravity IDE и Antigravity 2.0 (Desktop App)**: Так как Antigravity IDE использует системный стек сетевых запросов и Electron, установленные правила Smart DNS на уровне системы (`systemd-resolved` в Linux или сетевой адаптер в Windows) автоматически перенаправляют соединения IDE и приложения 2.0 к серверам Google API без блокировок.
+If you encounter issues during installation or execution:
 
-### 2. Что делать после обновления `agy`?
-При обновлении `agy` бинарник перезаписывается чистой версией от Google. Просто запустите скрипт разблокировки заново.
+> [!NOTE]
+> Please submit an issue report at [GitHub Issues](https://github.com/NakishN/antigravity-cli-unlocker/issues).
+
+When reporting an issue, include:
+- Operating System version (`lsb_release -a` or `winver`)
+- Antigravity CLI version (`agy --version`)
+- Complete console output log
 
 ---
 
-## 📜 Лицензия
-Проект распространяется под открытой лицензией [MIT](LICENSE).
+## License
+
+This project is licensed under the [MIT License](LICENSE).
