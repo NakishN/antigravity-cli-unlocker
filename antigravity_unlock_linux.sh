@@ -1,7 +1,7 @@
 #!/bin/bash
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                  Antigravity CLI Unlocker v2.1                       ║
-# ║          Regional Access & DNS Routing for Linux (Ubuntu)            ║
+# ║        Обход региональных ограничений и DNS для Linux (Ubuntu)       ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 set -euo pipefail
@@ -29,20 +29,20 @@ print_banner() {
     echo ""
     echo -e "${CYAN}${BOLD}====================================================================${NC}"
     echo -e "${CYAN}${BOLD}                  Antigravity CLI Unlocker v2.1                      ${NC}"
-    echo -e "${CYAN}${BOLD}          Regional Access & DNS Routing for Linux (Ubuntu)          ${NC}"
+    echo -e "${CYAN}${BOLD}        Обход региональных ограничений и DNS для Linux (Ubuntu)      ${NC}"
     echo -e "${CYAN}${BOLD}====================================================================${NC}"
     echo ""
 }
 
-ok()   { echo -e "  ${GREEN}[OK]${NC} $*"; }
-warn() { echo -e "  ${YELLOW}[WARN]${NC} $*"; }
-err()  { echo -e "  ${RED}[ERROR]${NC} $*"; }
-info() { echo -e "  ${BLUE}[INFO]${NC} $*"; }
+ok()   { echo -e "  ${GREEN}[ОК]${NC} $*"; }
+warn() { echo -e "  ${YELLOW}[ВНИМАНИЕ]${NC} $*"; }
+err()  { echo -e "  ${RED}[ОШИБКА]${NC} $*"; }
+info() { echo -e "  ${BLUE}[ИНФО]${NC} $*"; }
 step() { echo -e "\n${BOLD}[$1/3] $2${NC}"; }
 
 print_issues_help() {
     echo ""
-    echo -e "  ${YELLOW}Support & Troubleshooting:${NC}"
+    echo -e "  ${YELLOW}Поддержка и решение проблем:${NC}"
     echo -e "  ${CYAN}$ISSUES_URL${NC}"
     echo ""
 }
@@ -73,17 +73,17 @@ find_agy() {
 }
 
 step_backup() {
-    step 1 "Binary Backup"
+    step 1 "Создание резервной копии"
 
     if ! find_agy; then
-        err "Target binary 'agy' not found on system."
-        info "Install Antigravity CLI from https://antigravity.google/docs"
-        info "or specify explicit path: AGY_BIN=/path/to/agy $0"
+        err "Исполняемый файл 'agy' не найден в системе."
+        info "Установите Antigravity CLI с https://antigravity.google/docs"
+        info "или укажите явный путь: AGY_BIN=/path/to/agy $0"
         print_issues_help
         exit 1
     fi
 
-    info "Target binary located: $AGY_BIN"
+    info "Найден файл: $AGY_BIN"
     mkdir -p "$BACKUP_DIR"
 
     local current_ver backup_ver
@@ -91,19 +91,19 @@ step_backup() {
     backup_ver="$(get_agy_version "$BACKUP_FILE" 2>/dev/null || echo none)"
 
     if [[ -f "$BACKUP_FILE" && "$current_ver" != "$backup_ver" && "$current_ver" != unknown ]]; then
-        warn "Binary update detected: $backup_ver -> $current_ver"
+        warn "Обнаружено обновление бинарного файла: $backup_ver -> $current_ver"
         cp "$AGY_BIN" "$BACKUP_FILE"
-        ok "Backup updated to v$current_ver"
+        ok "Резервная копия обновлена до v$current_ver"
     elif [[ -f "$BACKUP_FILE" ]]; then
-        ok "Backup verified (v$backup_ver): $BACKUP_FILE"
+        ok "Резервная копия подтверждена (v$backup_ver): $BACKUP_FILE"
     else
         cp "$AGY_BIN" "$BACKUP_FILE"
-        ok "Backup created (v$current_ver): $BACKUP_FILE"
+        ok "Резервная копия создана (v$current_ver): $BACKUP_FILE"
     fi
 }
 
 step_patch_binary() {
-    step 2 "Machine Code Gate Patching"
+    step 2 "Патч регионального затвора в машинном коде"
 
     local result
     result=$(AGY_BIN="$AGY_BIN" python3 << 'PYEOF'
@@ -180,49 +180,49 @@ PYEOF
             local patches="${result#OK:}"
             IFS='|' read -ra parts <<< "$patches"
             for p in "${parts[@]}"; do
-                ok "Patch applied successfully: $p"
+                ok "Машинный патч успешно применен: $p"
             done
             ;;
         ALREADY)
             local items="${result#ALREADY:}"
             IFS='|' read -ra parts <<< "$items"
             for p in "${parts[@]}"; do
-                ok "Patch already applied: $p"
+                ok "Патч уже применен ранее: $p"
             done
             ;;
         MISSING)
-            err "Eligibility gate signatures not found."
-            info "Check binary version: agy --version"
+            err "Сигнатуры регионального затвора не обнаружены."
+            info "Проверьте версию исполняемого файла: agy --version"
             print_issues_help
             ;;
         ERROR)
-            err "Failed writing patched binary: ${result#ERROR:}"
-            warn "Ensure agy is not currently running."
+            err "Ошибка при записи пропатченного файла: ${result#ERROR:}"
+            warn "Убедитесь, что процесс agy завершен."
             print_issues_help
             ;;
     esac
 }
 
 step_dns() {
-    step 3 "System DNS Routing Configuration"
+    step 3 "Настройка системной DNS-маршрутизации"
 
-    info "DNS Servers: $DNS_PRIMARY, $DNS_SECONDARY"
+    info "Адреса DNS-серверов: $DNS_PRIMARY, $DNS_SECONDARY"
 
     local conf_dir="/etc/systemd/resolved.conf.d"
     local conf_file="$conf_dir/antigravity-unlock.conf"
 
     if [[ -f "$conf_file" ]] && grep -q "111.88.96.50" "$conf_file" 2>/dev/null; then
-        ok "systemd-resolved configuration already active: $conf_file"
+        ok "Конфигурация systemd-resolved уже активна: $conf_file"
         return 0
     fi
 
     if ! systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-        warn "systemd-resolved service is inactive. Skipping automated DNS setup."
-        warn "Enable service: sudo systemctl enable --now systemd-resolved"
+        warn "Служба systemd-resolved не активна. Автоматическая настройка DNS пропущена."
+        warn "Запустите службу: sudo systemctl enable --now systemd-resolved"
         return 0
     fi
 
-    info "Elevated permissions required to write $conf_file"
+    info "Требуются права root (sudo) для записи $conf_file"
     echo ""
 
     local tmp_conf
@@ -244,34 +244,34 @@ EOF
         resolvectl flush-caches 2>/dev/null || true
     "; then
         rm -f "$tmp_conf"
-        ok "DNS configuration created: $conf_file"
-        ok "systemd-resolved restarted, DNS cache flushed"
+        ok "Конфигурация DNS создана: $conf_file"
+        ok "Служба systemd-resolved перезапущена, кэш DNS очищен"
     else
         rm -f "$tmp_conf"
-        err "Failed writing systemd-resolved configuration."
+        err "Ошибка при записи конфигурации systemd-resolved."
         print_issues_help
     fi
 
     sleep 1
     if curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
         https://generativelanguage.googleapis.com/ 2>/dev/null | grep -qE "^(200|400|403|404)$"; then
-        ok "Google API connectivity verified."
+        ok "Соединение с Google API успешно подтверждено."
     else
-        warn "Connectivity check timed out. Start agy to verify status."
+        warn "Таймаут проверки соединения. Запустите agy для проверки работы."
     fi
 }
 
 step_restore() {
     echo ""
-    echo -e "${BOLD}${RED}Restoring Original System State${NC}"
+    echo -e "${BOLD}${RED}Восстановление исходного состояния системы${NC}"
     echo ""
 
     if [[ -f "$BACKUP_FILE" ]]; then
         find_agy || AGY_BIN="$HOME/.local/bin/agy"
         cp "$BACKUP_FILE" "$AGY_BIN"
-        ok "Original agy binary restored from backup."
+        ok "Оригинальный файл agy восстановлен из резервной копии."
     else
-        warn "Backup file not found: $BACKUP_FILE"
+        warn "Файл резервной копии не найден: $BACKUP_FILE"
     fi
 
     local conf_file="/etc/systemd/resolved.conf.d/antigravity-unlock.conf"
@@ -280,10 +280,10 @@ step_restore() {
             rm -f '$conf_file'
             systemctl restart systemd-resolved 2>/dev/null || true
             resolvectl flush-caches 2>/dev/null || true
-        " && ok "DNS routing rules removed."
+        " && ok "Правила DNS-маршрутизации удалены."
     fi
 
-    ok "System restore complete."
+    ok "Восстановление системы завершено."
 }
 
 main() {
@@ -300,17 +300,17 @@ main() {
 
     echo ""
     echo -e "${GREEN}${BOLD}====================================================================${NC}"
-    echo -e "${GREEN}${BOLD}             Antigravity CLI Unlock Completed                        ${NC}"
+    echo -e "${GREEN}${BOLD}             Разблокировка Antigravity CLI завершена                ${NC}"
     echo -e "${GREEN}${BOLD}====================================================================${NC}"
     echo ""
     local ver
     ver="$(get_agy_version || echo "?")"
-    echo -e "  Status:  ${BOLD}agy v$ver${NC} (Ready)"
-    echo -e "  Execute: ${BOLD}agy${NC}"
+    echo -e "  Статус:  ${BOLD}agy v$ver${NC} (Готов к работе)"
+    echo -e "  Запуск:  ${BOLD}agy${NC}"
     echo ""
-    echo -e "  Restore: bash \"$(realpath "$0")\" --restore"
-    echo -e "  Backup:  $BACKUP_FILE"
-    echo -e "  Support: $ISSUES_URL"
+    echo -e "  Откат:   bash \"$(realpath "$0")\" --restore"
+    echo -e "  Бэкап:   $BACKUP_FILE"
+    echo -e "  Поддержка: $ISSUES_URL"
     echo ""
 }
 

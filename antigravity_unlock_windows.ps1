@@ -1,6 +1,6 @@
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                  Antigravity CLI Unlocker v2.1                       ║
-# ║          Regional Access & DNS Routing for Windows                   ║
+# ║        Обход региональных ограничений и DNS для Windows              ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 [CmdletBinding()]
@@ -13,7 +13,7 @@ $IssuesUrl = "https://github.com/NakishN/antigravity-cli-unlocker/issues"
 $Host.UI.RawUI.ForegroundColor = 'Cyan'
 Write-Host "===================================================================="
 Write-Host "                  Antigravity CLI Unlocker v2.1                     "
-Write-Host "          Regional Access & DNS Routing for Windows                 "
+Write-Host "        Обход региональных ограничений и DNS для Windows            "
 Write-Host "===================================================================="
 $Host.UI.RawUI.ForegroundColor = 'Gray'
 Write-Host ""
@@ -24,7 +24,7 @@ $DnsPrimary = "111.88.96.50"
 $DnsSecondary = "111.88.96.51"
 
 function Show-IssuesHelp {
-    Write-Host "`n Support & Troubleshooting:" -ForegroundColor Yellow
+    Write-Host "`n Поддержка и решение проблем:" -ForegroundColor Yellow
     Write-Host "   $IssuesUrl`n" -ForegroundColor Cyan
 }
 
@@ -44,42 +44,42 @@ function Find-AgyBinary {
 }
 
 if ($Restore) {
-    Write-Host "[!] Restoring system state..." -ForegroundColor Yellow
+    Write-Host "[!] Восстановление исходного состояния..." -ForegroundColor Yellow
     $AgyBin = Find-AgyBinary
     if (Test-Path $BackupFile) {
         if (-not $AgyBin) { $AgyBin = "$env:USERPROFILE\.antigravity\bin\agy.exe" }
         Copy-Item -Path $BackupFile -Destination $AgyBin -Force
-        Write-Host "[OK] Binary agy.exe restored from backup." -ForegroundColor Green
+        Write-Host "[ОК] Исполняемый файл agy.exe восстановлен из резервной копии." -ForegroundColor Green
     } else {
-        Write-Host "[WARN] Backup file not found." -ForegroundColor Yellow
+        Write-Host "[ВНИМАНИЕ] Файл резервной копии не найден." -ForegroundColor Yellow
     }
 
     try {
         $Adapter = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
         if ($Adapter) {
             Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ResetServerAddresses
-            Write-Host "[OK] DNS server configuration reset to default (DHCP)." -ForegroundColor Green
+            Write-Host "[ОК] Настройки DNS-серверов сброшены к значениям по умолчанию (DHCP)." -ForegroundColor Green
         }
     } catch {
-        Write-Host "[WARN] Run script as Administrator to reset DNS settings." -ForegroundColor Yellow
+        Write-Host "[ВНИМАНИЕ] Для сброса DNS перезапустите скрипт от имени администратора." -ForegroundColor Yellow
     }
 
     ipconfig /flushdns | Out-Null
-    Write-Host "[OK] System restore completed successfully." -ForegroundColor Green
+    Write-Host "[ОК] Восстановление системы завершено." -ForegroundColor Green
     exit 0
 }
 
-Write-Host "[1/3] Binary Verification and Backup..." -ForegroundColor Magenta
+Write-Host "[1/3] Проверка бинарного файла и бэкап..." -ForegroundColor Magenta
 $AgyPath = Find-AgyBinary
 
 if (-not $AgyPath) {
-    Write-Host "[ERROR] Target binary 'agy.exe' not found on system." -ForegroundColor Red
-    Write-Host "  Install Antigravity CLI or add directory to PATH." -ForegroundColor Yellow
+    Write-Host "[ОШИБКА] Целевой файл 'agy.exe' не найден в системе." -ForegroundColor Red
+    Write-Host "  Установите Antigravity CLI или добавьте путь к нему в переменные среды PATH." -ForegroundColor Yellow
     Show-IssuesHelp
     exit 1
 }
 
-Write-Host "  [OK] Located agy.exe: $AgyPath" -ForegroundColor Green
+Write-Host "  [ОК] Найден файл agy.exe: $AgyPath" -ForegroundColor Green
 
 if (-not (Test-Path $BackupDir)) {
     New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
@@ -87,12 +87,12 @@ if (-not (Test-Path $BackupDir)) {
 
 if (-not (Test-Path $BackupFile)) {
     Copy-Item -Path $AgyPath -Destination $BackupFile -Force
-    Write-Host "  [OK] Backup created: $BackupFile" -ForegroundColor Green
+    Write-Host "  [ОК] Резервная копия создана: $BackupFile" -ForegroundColor Green
 } else {
-    Write-Host "  [OK] Backup verified: $BackupFile" -ForegroundColor Green
+    Write-Host "  [ОК] Резервная копия подтверждена: $BackupFile" -ForegroundColor Green
 }
 
-Write-Host "`n[2/3] Machine Code Gate Patching..." -ForegroundColor Magenta
+Write-Host "`n[2/3] Патч регионального затвора в машинном коде..." -ForegroundColor Magenta
 
 $PyCode = @"
 import sys, os, re
@@ -136,13 +136,13 @@ except Exception as e:
 $PyRes = python -c "$PyCode" 2>$null
 
 if ($PyRes -like "OK:*") {
-    Write-Host "  [OK] Patch applied successfully." -ForegroundColor Green
+    Write-Host "  [ОК] Патч успешно применен." -ForegroundColor Green
 } elseif ($PyRes -eq "ALREADY") {
-    Write-Host "  [OK] Binary is already patched." -ForegroundColor Green
+    Write-Host "  [ОК] Файл уже пропатчен ранее." -ForegroundColor Green
 } elseif ($PyRes -eq "MISSING") {
-    Write-Host "  [WARN] Gate signatures not matched." -ForegroundColor Yellow
+    Write-Host "  [ВНИМАНИЕ] Сигнатуры регионального затвора не совпали." -ForegroundColor Yellow
 } else {
-    Write-Host "  [INFO] Fallback patching via PowerShell..." -ForegroundColor Yellow
+    Write-Host "  [ИНФО] Применение патча через резервный механизм PowerShell..." -ForegroundColor Yellow
     try {
         $Bytes = [System.IO.File]::ReadAllBytes($AgyPath)
         $Patched = $false
@@ -157,43 +157,43 @@ if ($PyRes -like "OK:*") {
         }
         if ($Patched) {
             [System.IO.File]::WriteAllBytes($AgyPath, $Bytes)
-            Write-Host "  [OK] Patch applied via PowerShell." -ForegroundColor Green
+            Write-Host "  [ОК] Патч применен через PowerShell." -ForegroundColor Green
         } else {
-            Write-Host "  [OK] Binary already patched." -ForegroundColor Green
+            Write-Host "  [ОК] Файл уже содержит патч." -ForegroundColor Green
         }
     } catch {
-        Write-Host "  [ERROR] Writing binary failed. Close agy and retry." -ForegroundColor Red
+        Write-Host "  [ОШИБКА] Ошибка записи файла. Завершите процесс agy и повторите попытку." -ForegroundColor Red
         Show-IssuesHelp
     }
 }
 
-Write-Host "`n[3/3] System DNS Routing Configuration..." -ForegroundColor Magenta
+Write-Host "`n[3/3] Настройка системной DNS-маршрутизации..." -ForegroundColor Magenta
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
-    Write-Host "  [WARN] Administrator privileges required for DNS setup." -ForegroundColor Yellow
-    Write-Host "  [INFO] Re-run PowerShell script as Administrator." -ForegroundColor Yellow
+    Write-Host "  [ВНИМАНИЕ] Для настройки DNS необходимы права администратора." -ForegroundColor Yellow
+    Write-Host "  [ИНФО] Перезапустите PowerShell от имени администратора." -ForegroundColor Yellow
 } else {
     try {
         $Adapter = Get-NetAdapter | Where-Object Status -eq "Up" | Select-Object -First 1
         if ($Adapter) {
             Set-DnsClientServerAddress -InterfaceIndex $Adapter.ifIndex -ServerAddresses ($DnsPrimary, $DnsSecondary)
-            Write-Host "  [OK] Smart DNS ($DnsPrimary, $DnsSecondary) applied to interface: $($Adapter.Name)" -ForegroundColor Green
+            Write-Host "  [ОК] Серверы DNS ($DnsPrimary, $DnsSecondary) применены к интерфейсу: $($Adapter.Name)" -ForegroundColor Green
             ipconfig /flushdns | Out-Null
-            Write-Host "  [OK] DNS cache flushed." -ForegroundColor Green
+            Write-Host "  [ОК] Кэш DNS успешно очищен." -ForegroundColor Green
         } else {
-            Write-Host "  [WARN] Active network interface not found." -ForegroundColor Yellow
+            Write-Host "  [ВНИМАНИЕ] Активный сетевой адаптер не обнаружен." -ForegroundColor Yellow
         }
     } catch {
-        Write-Host "  [ERROR] DNS configuration failed: $_" -ForegroundColor Red
+        Write-Host "  [ОШИБКА] Ошибка при установке DNS-серверов: $_" -ForegroundColor Red
         Show-IssuesHelp
     }
 }
 
 Write-Host "`n====================================================================" -ForegroundColor Green
-Write-Host "             Antigravity CLI Unlock Completed                       " -ForegroundColor Green
+Write-Host "             Разблокировка Antigravity CLI завершена                " -ForegroundColor Green
 Write-Host "====================================================================`n" -ForegroundColor Green
-Write-Host "  Execute: agy" -ForegroundColor White
-Write-Host "  Restore: .\antigravity_unlock_windows.ps1 -Restore" -ForegroundColor Gray
-Write-Host "  Support: $IssuesUrl" -ForegroundColor Cyan
+Write-Host "  Запуск:    agy" -ForegroundColor White
+Write-Host "  Откат:     .\antigravity_unlock_windows.ps1 -Restore" -ForegroundColor Gray
+Write-Host "  Поддержка: $IssuesUrl" -ForegroundColor Cyan
