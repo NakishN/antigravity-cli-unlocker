@@ -1,9 +1,9 @@
 @echo off
-:: 🚀 Antigravity CLI Unlocker v2.1 (Windows Batch Launcher)
+:: Antigravity CLI Unlocker v2.2.0 (Windows Batch Launcher)
 :: Запуск PowerShell-скрипта с запросом прав Администратора
 
 chcp 65001 >nul
-title Antigravity CLI Unlocker v2.1
+title Antigravity CLI Unlocker v2.2.0
 
 net session >nul 2>&1
 if %errorLevel% neq 0 (

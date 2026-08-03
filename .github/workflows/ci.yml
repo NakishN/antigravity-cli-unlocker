@@ -17,9 +17,11 @@ jobs:
         with:
           python-version: '3.11'
           
-      - name: Lint Python Code
+      - name: Lint Python Code with Ruff & py_compile
         run: |
+          pip install ruff
           python -m py_compile antigravity_unlock.py
+          ruff check antigravity_unlock.py
           
       - name: ShellCheck Bash Script
         uses: ludeeus/action-shellcheck@master
