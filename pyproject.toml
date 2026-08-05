@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "antigravity-cli-unlocker"
+version = "3.0.0"
+description = "Cross-Platform Split-Tunnel Proxy & Binary Patcher for Google Antigravity CLI (agy)"
+readme = "README.md"
+authors = [{ name = "NakishN" }]
+license = { text = "MIT" }
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+antigravity-unlock = "antigravity_unlock.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["antigravity_unlock*"]
+
+[tool.setuptools.package-data]
+antigravity_unlock = ["*.json"]

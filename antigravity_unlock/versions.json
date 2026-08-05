@@ -1,0 +1,34 @@
+{
+  "versions": {
+    "1.0.0-sample": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "patches": [
+        {
+          "offset": 0,
+          "original": "656c69676962696c69747920636865636b206661696c6564",
+          "replacement": "656c69676962696c69747920636865636b20627970617373"
+        }
+      ]
+    }
+  },
+  "wildcard_patterns": [
+    {
+      "name": "eligibility_check_failed",
+      "pattern": "656c69676962696c69747920636865636b206661696c6564",
+      "replacement": "656c69676962696c69747920636865636b20627970617373",
+      "description": "Bypasses eligibility check string"
+    },
+    {
+      "name": "account_ineligible",
+      "pattern": "4163636f756e7420696e656c696769626c65",
+      "replacement": "4163636f756e7420696e6578696769626c65",
+      "description": "Bypasses Account ineligible string"
+    },
+    {
+      "name": "agent_execution_error",
+      "pattern": "4167656e7420657865637574696f6e207465726d696e617465642064756520746f206572726f722e",
+      "replacement": "4167656e7420657865637574696f6e207465726d696e617465642c206572726f722068696464656e",
+      "description": "Masks error termination UI string"
+    }
+  ]
+}

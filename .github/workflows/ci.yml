@@ -7,21 +7,20 @@ on:
     branches: [ main ]
 
 jobs:
-  lint:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
-      - name: Verify Python Code Syntax
+
+      - name: Install dependencies
         run: |
-          python -m py_compile antigravity_unlock.py
-          
-      - name: ShellCheck Bash Script
-        uses: ludeeus/action-shellcheck@master
-        with:
-          scans: 'antigravity_unlock_linux.sh'
+          python -m pip install --upgrade pip setuptools pytest
+
+      - name: Run pytest test suite
+        run: |
+          pytest
