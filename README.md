@@ -1,120 +1,122 @@
-# Antigravity CLI Unlocker v3.0
+# Antigravity CLI Unlocker
 
-🚀 **Antigravity CLI Unlocker v3.0** — современный кроссплатформенный инструментарий для обхода региональных ограничений при работе с **Google Antigravity CLI (`agy`)**, **Antigravity IDE** и **Antigravity 2.0** на Linux, macOS и Windows.
-
----
-
-## 💡 Что нового в версии 3.0?
-
-1. **Split-Tunnel Micro-Proxy (Локальный раздельный прокси):**
-   - **Защита сессий:** Сервисы авторизации (`accounts.google.com`, `oauth2.googleapis.com`) обрабатываются **напрямую (DIRECT)** без изменений трафика.
-   - **Изоляция:** Переменные `HTTP_PROXY` / `HTTPS_PROXY` выставляются **только для дочернего процесса `agy`** в режиме `run-wrapped`. Не требуются права `root` / администратора и изменение глобальных сетевых настроек ОС!
-2. **Безопасный сигнатурный патчер:**
-   - **Версионный реестр (`versions.json`):** Проверка точных SHA-256 хэшей бинарников с офсетами замен.
-   - **Wildcard Pattern Matching:** Умный поиск по байтовым маскам для неизвестных версий `agy`.
-   - **Атомарная запись:** Бэкап `*.original.bak` перед изменениями и проверка совпадения размера байт-в-байт.
-3. **Релизы в один клик (.AppImage, .exe):**
-   - **Linux:** Доступны `.AppImage` пакеты и бинарники `antigravity-unlock-linux-x86_64`.
-   - **Windows:** Доступны готовые `.exe` исполняемые файлы (без необходимости установки Python).
+Antigravity CLI Unlocker — инструментарий для обхода региональных ограничений и автоматической настройки DNS-маршрутизации для **Google Antigravity CLI (`agy`)**, **Antigravity IDE** и **Antigravity 2.0** на операционных системах Linux, macOS и Windows без использования VPN.
 
 ---
 
-## 📦 Быстрый запуск
+## Описание проекта
 
-### Вариант 1: Использование готовых релизов (Рекомендуется)
+В регионах с ограничениями прямой доступ к эндпоинтам Google Generative AI (`generativelanguage.googleapis.com`) и сервисам авторизации блокируется на уровне граничных маршрутизаторов. Antigravity CLI Unlocker решает эту проблему следующими механизмами:
 
-Скачайте бинарник для вашей ОС в разделе **[Releases](https://github.com/NakishN/antigravity-cli-unlocker/releases)**:
+1. **Патч региональных проверок (Eligibility Gate)**: Снятие внутренних геолокационных проверок в исполняемом файле `agy` / `agy.exe` (для архитектур x64 и ARM64).
+2. **Системная DNS-маршрутизация и Split-Tunnel Proxy**: Направление доменных имен Google API через специализированные DNS-шлюзы (`111.88.96.50` / `111.88.96.51`) или через изолированный локальный прокси (`run-wrapped` режим) без затрагивания сервисов авторизации `accounts.google.com`.
 
-#### Linux (.AppImage)
+---
+
+## Основные возможности
+
+| Параметр | Значение |
+| :--- | :--- |
+| **Поддерживаемые ОС** | Ubuntu 24.04, Debian, Arch Linux, Fedora, macOS, Windows 10, Windows 11 |
+| **Поддерживаемые компоненты** | Antigravity CLI (`agy`), Antigravity IDE, Antigravity 2.0 |
+| **Требования к сети** | Использование VPN не требуется |
+| **Готовые релизы** | Готовые бинарники `.AppImage` (Linux), `.exe` (Windows), автономные исполняемые файлы |
+| **Безопасность** | Вычисление SHA256, авто-бэкап бинарника перед патчем, аргумент `--dry-run`, команда отката (`--restore`) |
+
+---
+
+## Установка и запуск
+
+### Вариант 1: Использование готовых релизов (.AppImage / .exe)
+
+Скачайте релиз со страницы **[GitHub Releases](https://github.com/NakishN/antigravity-cli-unlocker/releases)**:
+
+#### Linux (.AppImage / бинарник)
 ```bash
 chmod +x Antigravity_Unlocker-x86_64.AppImage
 ./Antigravity_Unlocker-x86_64.AppImage run -- agy login
 ```
 
 #### Windows (.exe)
-Запустите в консоли PowerShell / CMD:
-```cmd
-antigravity-unlock.exe run -- agy login
+```powershell
+.\antigravity-unlock-windows-x64.exe run -- agy login
 ```
 
 ---
 
-### Вариант 2: Запуск из исходников (Python 3.8+)
+### Вариант 2: Запуск из исходников
 
-Клонируйте репозиторий и установите CLI:
+#### Linux & macOS
+
+Выполните команду установки:
 
 ```bash
 git clone https://github.com/NakishN/antigravity-cli-unlocker.git
 cd antigravity-cli-unlocker
-pip install .
+chmod +x antigravity_unlock_linux.sh
+./antigravity_unlock_linux.sh
+```
+
+##### Дополнительные аргументы:
+- `run -- agy <команда>`: Запустить `agy` с изолированным Split-Tunnel прокси.
+- `--dry-run`: Выполнить проверку и расчет SHA-256 без внесения физических изменений в файл.
+- `--force`: Принудительно выполнить патч даже при неизвестном хэше.
+- `--restore`: Восстановить исходный бинарник из резервной копии.
+
+---
+
+### Windows (10 / 11)
+
+#### Способ 1: Запуск bat-файла (Рекомендуется)
+1. Скачайте или клонируйте репозиторий.
+2. Нажмите правой кнопкой мыши по файлу **`antigravity_unlock_windows.bat`** и выберите **«Запуск от имени администратора»**.
+
+#### Способ 2: Запуск через PowerShell (Администратор)
+Откройте PowerShell от имени администратора и выполните:
+
+```powershell
+Set-ExecutionPolicy Unrestricted -Scope Process -Force
+.\antigravity_unlock_windows.ps1
 ```
 
 ---
 
-## 🛠 Команды CLI
+## Безопасность и архитектура DNS
 
-### 1. Запуск agy под локальным прокси (Run-Wrapped)
-Запускает локальный Split-Tunnel прокси на случайном порту, изолированно настраивает окружение и исполняет `agy`:
+### Уведомление о DNS-серверах и прокси
+По умолчанию система настраивает маршрутизацию доменов `generativelanguage.googleapis.com` через проверенные публичные серверы сообщества Smart DNS (`111.88.96.50` / `111.88.96.51`) или локальный прокси. При этом трафик авторизации `accounts.google.com` пускается напрямую (DIRECT) для предотвращения любых рисков безопасности.
+
+- На **Linux** под управлением `systemd-resolved` создается отдельный изолированный файл правил `/etc/systemd/resolved.conf.d/antigravity-unlock.conf`.
+- На **Windows** определяется активный сетевой маршрут по умолчанию (`Get-NetRoute -DestinationPrefix "0.0.0.0/0"`).
+- Логи работы сохраняются в системный файл: `~/.local/share/antigravity-unlocker/unlocker.log`.
+
+---
+
+## Откат изменений (Восстановление)
+
+Для полного восстановления оригинального файла `agy` и сброса сетевых настроек DNS:
+
+### Linux / macOS
 ```bash
-antigravity-unlock run -- agy login
-antigravity-unlock run -- agy generate "напиши функцию на python"
+./antigravity_unlock_linux.sh --restore
 ```
 
-### 2. Патчинг бинарного файла agy
-Автоматически сканирует PATH, VS Code / Cursor расширения и директории Antigravity IDE, подготавливая бинарник:
-```bash
-antigravity-unlock patch
-```
-
-### 3. Восстановление исходного файла
-Восстанавливает оригинальный бинарный файл `agy` из `.bak` бэкапа:
-```bash
-antigravity-unlock restore
-```
-
-### 4. Автономный запуск прокси-сервера
-Запускает локальный прокси на порту 18888 (или любом указанном):
-```bash
-antigravity-unlock proxy --port 18888
-```
-
-### 5. Проверка статуса
-```bash
-antigravity-unlock status
+### Windows
+```powershell
+.\antigravity_unlock_windows.ps1 -Restore
 ```
 
 ---
 
-## 🔐 Безопасность и архитектура
+## Поддержка и решение проблем
 
-```
-+----------------------------------------------------------------+
-|                   Процесс agy / Antigravity                    |
-+----------------------------------------------------------------+
-                               |
-                   [Local Split-Tunnel Proxy]
-                               |
-        +----------------------+----------------------+
-        |                                             |
-[accounts.google.com]                       [generativelanguage]
-        |                                             |
-   (DIRECT connection)                        (Smart Endpoint)
-```
+При возникновении ошибок или вопросов при установке и использовании:
 
-- **Принцип наименьших привилегий:** Программа работает без прав суперпользователя.
-- **Никаких фальшивых сертификатов:** Не требуется установка CA-сертификатов.
+> [!NOTE]
+> Вы можете создать обращение в разделе [GitHub Issues](https://github.com/NakishN/antigravity-cli-unlocker/issues).
 
 ---
 
-## 🧪 Тестирование
+## Лицензия
 
-Для прогона встроенных тестов выполняйте:
-```bash
-python3 -m unittest discover tests
-```
-
----
-
-## 📄 Лицензия
-
-Открытая лицензия [MIT](LICENSE).
+Проект распространяется под открытой лицензией [MIT](LICENSE).
