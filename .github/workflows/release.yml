@@ -39,6 +39,11 @@ jobs:
           python -m pip install --upgrade pip setuptools pytest pyinstaller
           python -m pip install -e .
 
+      - name: Install AppImage build tools on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y squashfs-tools
+
       - name: Run test suite
         run: |
           python -m pytest
@@ -51,7 +56,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           chmod +x packaging/build_appimage.sh
-          ./packaging/build_appimage.sh || true
+          ./packaging/build_appimage.sh
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4

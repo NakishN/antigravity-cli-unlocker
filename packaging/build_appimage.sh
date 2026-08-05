@@ -11,8 +11,10 @@ DIST_DIR="${ROOT_DIR}/dist"
 mkdir -p "${APP_DIR}/usr/bin"
 mkdir -p "${DIST_DIR}"
 
-# 1. Build PyInstaller binary
-python3 "${ROOT_DIR}/packaging/build_binaries.py"
+# 1. Build PyInstaller binary if needed
+if [[ ! -f "${DIST_DIR}/antigravity-unlock" ]]; then
+    python3 "${ROOT_DIR}/packaging/build_binaries.py"
+fi
 
 # 2. Copy binary to AppDir
 cp "${DIST_DIR}/antigravity-unlock" "${APP_DIR}/usr/bin/antigravity-unlock"
@@ -44,17 +46,14 @@ cat > "${APP_DIR}/antigravity-unlock.svg" << 'EOF'
 </svg>
 EOF
 
-# 5. Fetch appimagetool if not present and generate .AppImage
+# 5. Fetch appimagetool and generate .AppImage
 APPIMAGETOOL="/tmp/appimagetool"
 if [[ ! -f "${APPIMAGETOOL}" ]]; then
     echo "Downloading appimagetool..."
-    curl -sLO "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o "${APPIMAGETOOL}" || true
-    chmod +x "${APPIMAGETOOL}" 2>/dev/null || true
+    curl -sL "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o "${APPIMAGETOOL}"
+    chmod +x "${APPIMAGETOOL}"
 fi
 
-if [[ -x "${APPIMAGETOOL}" ]]; then
-    ARCH=x86_64 "${APPIMAGETOOL}" "${APP_DIR}" "${DIST_DIR}/Antigravity_Unlocker-x86_64.AppImage"
-    echo "AppImage created at ${DIST_DIR}/Antigravity_Unlocker-x86_64.AppImage"
-else
-    echo "Notice: AppDir structure prepared at ${APP_DIR}. Install appimagetool to finalize .AppImage bundle."
-fi
+echo "Running appimagetool to create .AppImage..."
+ARCH=x86_64 "${APPIMAGETOOL}" --appimage-extract-and-run "${APP_DIR}" "${DIST_DIR}/Antigravity_Unlocker-x86_64.AppImage"
+echo "AppImage created successfully at ${DIST_DIR}/Antigravity_Unlocker-x86_64.AppImage"
