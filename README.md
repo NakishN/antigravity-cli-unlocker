@@ -114,6 +114,7 @@ Set-ExecutionPolicy Unrestricted -Scope Process -Force
 
 > [!NOTE]
 > Вы можете создать обращение в разделе [GitHub Issues](https://github.com/NakishN/antigravity-cli-unlocker/issues).
+> Также можете вступить в телеграмм группу, где буду ещё многое публиковать https://t.me/NakishN
 
 ---
 
