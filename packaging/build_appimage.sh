@@ -12,12 +12,12 @@ mkdir -p "${APP_DIR}/usr/bin"
 mkdir -p "${DIST_DIR}"
 
 # 1. Build PyInstaller binary if needed
-if [[ ! -f "${DIST_DIR}/antigravity-unlock" ]]; then
+if [[ ! -f "${DIST_DIR}/antigravity-unlock-linux-x86_64" ]]; then
     python3 "${ROOT_DIR}/packaging/build_binaries.py"
 fi
 
 # 2. Copy binary to AppDir
-cp "${DIST_DIR}/antigravity-unlock" "${APP_DIR}/usr/bin/antigravity-unlock"
+cp "${DIST_DIR}/antigravity-unlock-linux-x86_64" "${APP_DIR}/usr/bin/antigravity-unlock"
 
 # 3. Create AppRun launcher
 cat > "${APP_DIR}/AppRun" << 'EOF'
