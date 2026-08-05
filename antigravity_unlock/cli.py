@@ -6,11 +6,11 @@ import sys
 import os
 import argparse
 
-from . import __version__
-from .discovery import find_agy_binaries, get_primary_agy
-from .patcher import patch_binary, restore_binary, compute_sha256, get_backup_path
-from .proxy import run_proxy_server
-from .runner import run_wrapped_command
+from antigravity_unlock import __version__
+from antigravity_unlock.discovery import find_agy_binaries, get_primary_agy
+from antigravity_unlock.patcher import patch_binary, restore_binary, compute_sha256, get_backup_path
+from antigravity_unlock.proxy import run_proxy_server
+from antigravity_unlock.runner import run_wrapped_command
 
 def print_banner():
     print(f"""

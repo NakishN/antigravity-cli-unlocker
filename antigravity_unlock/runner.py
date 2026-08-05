@@ -10,9 +10,9 @@ import socket
 import threading
 import subprocess
 
-from .discovery import get_primary_agy
-from .patcher import patch_binary
-from .proxy import SplitTunnelProxy, run_proxy_server
+from antigravity_unlock.discovery import get_primary_agy
+from antigravity_unlock.patcher import patch_binary
+from antigravity_unlock.proxy import run_proxy_server
 
 def find_free_port():
     """Finds an available local port."""
