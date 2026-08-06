@@ -11,6 +11,7 @@ from antigravity_unlock.discovery import find_agy_binaries, get_primary_agy
 from antigravity_unlock.patcher import patch_binary, restore_binary, compute_sha256, get_backup_path
 from antigravity_unlock.proxy import run_proxy_server
 from antigravity_unlock.runner import run_wrapped_command
+from antigravity_unlock.ca_manager import get_or_create_ca, install_ca_system
 
 def print_banner():
     print(f"""
@@ -59,6 +60,9 @@ def main():
     proxy_parser = subparsers.add_parser("proxy", help="Run standalone Split-Tunnel proxy server")
     proxy_parser.add_argument("--host", default="127.0.0.1", help="Proxy host (default: 127.0.0.1)")
     proxy_parser.add_argument("--port", type=int, default=18888, help="Proxy port (default: 18888)")
+
+    # Command: install-ca
+    subparsers.add_parser("install-ca", help="Install local MITM CA certificate into system trust store (requires sudo)")
 
     # Command: status
     subparsers.add_parser("status", help="Show system agy binaries and patch status")
@@ -109,6 +113,20 @@ def main():
         print(f"Starting Split-Tunnel Proxy on http://{args.host}:{args.port}...")
         run_proxy_server(host=args.host, port=args.port)
 
+    elif args.command == "install-ca":
+        print_banner()
+        _, _, ca_cert_path = get_or_create_ca()
+        print(f" CA certificate: {ca_cert_path}")
+        print(" Installing into system trust store (may require sudo password)...")
+        success, msg = install_ca_system(ca_cert_path)
+        print(f" {'✅' if success else '❌'} {msg}")
+        if success:
+            print("\n CA installed. Now run:")
+            print("   antigravity-unlock run -- agy")
+        else:
+            print("\n Manual install: sudo cp " + ca_cert_path + " /usr/local/share/ca-certificates/antigravity-unlocker.crt && sudo update-ca-certificates")
+        sys.exit(0 if success else 1)
+
     elif args.command == "status":
         status_cmd()
 
@@ -122,7 +140,8 @@ def main():
             success, msg, _ = patch_binary(agy_path)
             print(f"Patch Result: {msg}")
             print("\nUsage tips:")
-            print("  antigravity-unlock run -- agy login   (Run agy with split-tunnel proxy)")
+            print("  antigravity-unlock install-ca         (Install MITM CA certificate - run once)")
+            print("  antigravity-unlock run -- agy         (Run agy with MITM split-tunnel proxy)")
             print("  antigravity-unlock restore            (Restore original binary)")
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Antigravity CLI Unlocker
+Exec=antigravity-unlock
+Icon=antigravity-unlock
+Type=Application
+Categories=Utility;Network;
+Comment=Bypass regional restrictions for Google Antigravity CLI
