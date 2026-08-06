@@ -2,6 +2,12 @@
 
 All notable changes to the Antigravity CLI Unlocker project will be documented in this file.
 
+## [1.0.1] - 2026-08-06
+
+### Fixed
+- **Smart DNS Resolution in SplitTunnelProxy**: Integrated a pure-Python UDP DNS A-record resolver with in-memory TTL caching. Target Google API endpoints are resolved via Smart DNS queries instead of using the DNS server IP as a TCP target, eliminating TLS certificate verification errors (`*.xbox-dns.ru`).
+- **Direct Auth Routing**: Removed `~accounts.google.com` from `systemd-resolved` domain rules in `antigravity_unlock_linux.sh` to preserve direct authentication.
+
 ## [3.0.0] - 2026-08-05
 
 ### Added

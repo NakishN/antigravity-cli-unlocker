@@ -4,9 +4,13 @@ Routes accounts.google.com DIRECTLY and generativelanguage.googleapis.com via Sm
 """
 
 import sys
+import os
+import time
+import random
+import struct
+import socket
 import asyncio
 import logging
-import socket
 from urllib.parse import urlparse
 
 # Configure default logging
@@ -21,9 +25,87 @@ DIRECT_DOMAINS = {
     "lh3.googleusercontent.com",
 }
 
-# Upstream Smart DNS server for AI endpoints
+# Upstream Smart DNS servers for AI endpoints
 SMART_DNS_PRIMARY = "111.88.96.50"
 SMART_DNS_SECONDARY = "111.88.96.51"
+
+# Memory cache for resolved DNS entries: {hostname: (ip, expiry_timestamp)}
+DNS_CACHE = {}
+CACHE_TTL = 300  # seconds
+
+def query_dns_server(hostname, dns_ip, timeout=1.5):
+    """
+    Sends a pure-Python UDP DNS query for A-record to a specific DNS server IP.
+    Returns resolved IPv4 string or None on failure/timeout.
+    """
+    try:
+        tx_id = random.randint(0, 65535)
+        header = struct.pack(">HHHHHH", tx_id, 0x0100, 1, 0, 0, 0)
+        qname = b"".join(bytes([len(part)]) + part.encode("ascii") for part in hostname.split(".")) + b"\x00"
+        question = qname + struct.pack(">HH", 1, 1)  # Type A (1), Class IN (1)
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(timeout)
+        try:
+            sock.sendto(header + question, (dns_ip, 53))
+            data, _ = sock.recvfrom(1024)
+        finally:
+            sock.close()
+
+        # Parse DNS response packet
+        idx = 12 + len(question)
+        if len(data) < idx:
+            return None
+
+        ancount = struct.unpack(">H", data[6:8])[0]
+        for _ in range(ancount):
+            if idx >= len(data):
+                break
+            # Skip domain name (handle compressed pointer 0xC0 or standard label)
+            if data[idx] >= 192:
+                idx += 2
+            else:
+                while idx < len(data) and data[idx] != 0:
+                    idx += 1 + data[idx]
+                idx += 1
+            if idx + 10 > len(data):
+                break
+
+            rtype, rclass, ttl, rdlength = struct.unpack(">HHIH", data[idx:idx + 10])
+            idx += 10
+            if rtype == 1 and rdlength == 4 and idx + 4 <= len(data):  # IPv4 A record
+                return socket.inet_ntoa(data[idx:idx + 4])
+            idx += rdlength
+    except Exception as e:
+        logger.debug(f"DNS UDP query error for {hostname} via {dns_ip}: {e}")
+    return None
+
+def resolve_smart_dns(hostname, primary=SMART_DNS_PRIMARY, secondary=SMART_DNS_SECONDARY):
+    """
+    Resolves hostname via Smart DNS with memory caching and fallback.
+    Returns resolved IP address string or original hostname on failure.
+    """
+    # Direct domains use system DNS
+    if any(hostname == d or hostname.endswith("." + d) for d in DIRECT_DOMAINS):
+        return hostname
+
+    now = time.time()
+    if hostname in DNS_CACHE:
+        ip, expiry = DNS_CACHE[hostname]
+        if now < expiry:
+            return ip
+
+    # Query Smart DNS primary & secondary
+    resolved_ip = query_dns_server(hostname, primary)
+    if not resolved_ip and secondary:
+        resolved_ip = query_dns_server(hostname, secondary)
+
+    if resolved_ip:
+        DNS_CACHE[hostname] = (resolved_ip, now + CACHE_TTL)
+        logger.debug(f"Smart DNS resolved {hostname} -> {resolved_ip}")
+        return resolved_ip
+
+    return hostname
 
 async def pipe_streams(reader, writer):
     """Pipes bytes continuously between reader and writer."""
@@ -51,12 +133,8 @@ class SplitTunnelProxy:
         self.server = None
 
     async def resolve_smart(self, hostname):
-        """Resolves hostname using Smart DNS IP if needed, or falls back to system DNS."""
-        if any(hostname == d or hostname.endswith("." + d) for d in DIRECT_DOMAINS):
-            # Direct system DNS resolution
-            return hostname
-        # For googleapis.com, send through Smart DNS endpoint / IP
-        return self.smart_ip if hostname.endswith("googleapis.com") else hostname
+        """Resolves hostname using Smart DNS IP lookup if needed, or falls back to system DNS."""
+        return resolve_smart_dns(hostname, primary=self.smart_ip, secondary=SMART_DNS_SECONDARY)
 
     async def handle_client(self, client_reader, client_writer):
         """Handles incoming client proxy connection (HTTP CONNECT / GET / POST)."""

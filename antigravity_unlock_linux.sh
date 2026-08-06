@@ -87,11 +87,11 @@ step_dns() {
     local tmp_conf
     tmp_conf=$(mktemp /tmp/antigravity-dns-XXXXXX.conf)
     cat > "$tmp_conf" << EOF
-# Antigravity CLI Unlocker v2.2.0 Configuration
+# Antigravity CLI Unlocker Configuration
 [Resolve]
 DNS=$DNS_PRIMARY $DNS_SECONDARY
 FallbackDNS=$DNS_PRIMARY_V6 $DNS_SECONDARY_V6
-Domains=~googleapis.com ~googleusercontent.com ~accounts.google.com ~google ~goog
+Domains=~googleapis.com ~googleusercontent.com ~google ~goog
 EOF
 
     if sudo bash -c "

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Antigravity CLI Unlocker Core Launcher v3.0.0
+Antigravity CLI Unlocker Core Launcher v1.0.1
 Delegates to the modular antigravity_unlock package.
 """
 
