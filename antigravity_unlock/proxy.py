@@ -134,11 +134,6 @@ class SplitTunnelProxy:
 
     async def resolve_smart(self, hostname):
         """Resolves hostname using Smart DNS IP lookup if needed, or falls back to system DNS."""
-        norm_host = hostname.strip().lower().rstrip(".")
-        if any(norm_host == d or norm_host.endswith("." + d) for d in DIRECT_DOMAINS):
-            return hostname
-        if norm_host.endswith("googleapis.com"):
-            return self.smart_ip
         return resolve_smart_dns(hostname, primary=self.smart_ip, secondary=SMART_DNS_SECONDARY)
 
     async def handle_client(self, client_reader, client_writer):

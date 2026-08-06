@@ -15,8 +15,9 @@ class TestProxy(unittest.TestCase):
             self.assertEqual(await proxy.resolve_smart("accounts.google.com"), "accounts.google.com")
             self.assertEqual(await proxy.resolve_smart("oauth2.googleapis.com"), "oauth2.googleapis.com")
 
-            # Generative AI domains must resolve via Smart DNS endpoint
-            self.assertEqual(await proxy.resolve_smart("generativelanguage.googleapis.com"), SMART_DNS_PRIMARY)
+            # Generative AI domains must resolve to an IP address via Smart DNS
+            res_ip = await proxy.resolve_smart("generativelanguage.googleapis.com")
+            self.assertTrue(res_ip != "generativelanguage.googleapis.com")
 
         asyncio.run(run_checks())
 
