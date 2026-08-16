@@ -92,6 +92,23 @@ def _is_patched_binary(agy_path):
     return True
 
 
+import urllib.request
+
+def download_pinned_backup(agy_path=None, target_version=DEFAULT_PINNED_VERSION):
+    agy_path = agy_path or get_primary_agy() or "agy"
+    pinned_backup = get_pinned_backup_path(agy_path)
+    url = f"https://github.com/NakishN/antigravity-cli-unlocker/releases/download/v1.1.0/agy-{target_version}-linux-x86_64"
+    logger.info("Downloading pinned agy %s binary from GitHub Releases: %s", target_version, url)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "AntigravityUnlocker/1.1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp, open(pinned_backup, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        os.chmod(pinned_backup, 0o755)
+        return True, f"Downloaded {target_version} backup to {pinned_backup}"
+    except Exception as e:
+        return False, f"Failed to download {target_version} backup: {e}"
+
+
 def init_pin(agy_path=None, pinned_version=None, source_path=None):
     agy_path = agy_path or get_primary_agy()
     if not agy_path:
@@ -100,19 +117,25 @@ def init_pin(agy_path=None, pinned_version=None, source_path=None):
     config = load_config()
     target_version = pinned_version or config.get("pinned_version") or DEFAULT_PINNED_VERSION
     source = source_path or _find_source_for_pin(agy_path)
-    if not source:
-        return False, "No source binary found for pin init."
-
-    source_version = get_agy_version(source)
-    if source_version and source_version != target_version:
-        return False, (
-            f"Source binary version is {source_version}, expected {target_version}. "
-            f"Provide a {target_version} backup first."
-        )
-
     pinned_backup = get_pinned_backup_path(agy_path)
-    shutil.copy2(source, pinned_backup)
-    os.chmod(pinned_backup, 0o755)
+
+    source_version = get_agy_version(source) if source else None
+    if not source or (source_version and source_version != target_version):
+        # Try downloading pinned backup from GitHub release asset as fallback
+        dl_ok, dl_msg = download_pinned_backup(agy_path=agy_path, target_version=target_version)
+        if dl_ok:
+            source = pinned_backup
+        else:
+            if source_version:
+                return False, (
+                    f"Source binary version is {source_version}, expected {target_version}. "
+                    f"Provide a {target_version} backup or download it manually."
+                )
+            return False, "No source binary found for pin init."
+
+    if source != pinned_backup:
+        shutil.copy2(source, pinned_backup)
+        os.chmod(pinned_backup, 0o755)
 
     pinned_sha = compute_sha256(pinned_backup)
     pinned_size = os.path.getsize(pinned_backup)
