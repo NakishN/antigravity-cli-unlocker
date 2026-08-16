@@ -221,8 +221,11 @@ def ensure_pinned(agy_path=None, dry_run=False):
         return True, f"[DRY-RUN] Would {action}: {reason}", False
 
     if needs_restore:
-        shutil.copy2(pinned_backup, agy_path)
-        os.chmod(agy_path, 0o755)
+        # Atomic replace to prevent OSError: Text file busy on Linux
+        tmp_target = agy_path + ".tmp_restore"
+        shutil.copy2(pinned_backup, tmp_target)
+        os.chmod(tmp_target, 0o755)
+        os.replace(tmp_target, agy_path)
         logger.info("Restored agy from pinned backup (%s): %s", reason, pinned_backup)
 
     if config.get("auto_patch", True):
