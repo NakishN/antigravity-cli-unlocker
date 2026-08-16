@@ -7,6 +7,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import urllib.request
 
 from antigravity_unlock.config import (
     DEFAULT_PINNED_VERSION,
@@ -92,12 +94,18 @@ def _is_patched_binary(agy_path):
     return True
 
 
-import urllib.request
-
 def download_pinned_backup(agy_path=None, target_version=DEFAULT_PINNED_VERSION):
     agy_path = agy_path or get_primary_agy() or "agy"
     pinned_backup = get_pinned_backup_path(agy_path)
-    url = f"https://github.com/NakishN/antigravity-cli-unlocker/releases/download/v1.1.0/agy-{target_version}-linux-x86_64"
+
+    if sys.platform == "win32":
+        asset = f"agy-{target_version}-windows-x64.exe"
+    elif sys.platform == "darwin":
+        asset = f"agy-{target_version}-macos-universal"
+    else:
+        asset = f"agy-{target_version}-linux-x86_64"
+
+    url = f"https://github.com/NakishN/antigravity-cli-unlocker/releases/download/v1.1.0/{asset}"
     logger.info("Downloading pinned agy %s binary from GitHub Releases: %s", target_version, url)
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "AntigravityUnlocker/1.1.0"})
@@ -106,7 +114,7 @@ def download_pinned_backup(agy_path=None, target_version=DEFAULT_PINNED_VERSION)
         os.chmod(pinned_backup, 0o755)
         return True, f"Downloaded {target_version} backup to {pinned_backup}"
     except Exception as e:
-        return False, f"Failed to download {target_version} backup: {e}"
+        return False, f"Failed to download {target_version} backup ({e})"
 
 
 def init_pin(agy_path=None, pinned_version=None, source_path=None):
