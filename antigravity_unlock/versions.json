@@ -5,7 +5,8 @@
       "wildcard_patterns": [
         "eligibility_check_failed",
         "account_ineligible",
-        "agent_execution_error"
+        "agent_execution_error",
+        "protobuf_ineligible"
       ]
     },
     "1.0.0-sample": {
@@ -37,6 +38,12 @@
       "pattern": "4167656e7420657865637574696f6e207465726d696e617465642064756520746f206572726f722e",
       "replacement": "4167656e7420657865637574696f6e207465726d696e617465642c206572726f722068696464656e",
       "description": "Masks error termination UI string"
+    },
+    {
+      "name": "protobuf_ineligible",
+      "pattern": "696e656c696769626c65",
+      "replacement": "696e6578696769626c65",
+      "description": "Bypasses protobuf ineligible struct tag in newer binaries"
     }
   ]
 }
