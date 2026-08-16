@@ -1,5 +1,13 @@
 {
   "versions": {
+    "1.1.9": {
+      "description": "Antigravity CLI 1.1.9 pinned release",
+      "wildcard_patterns": [
+        "eligibility_check_failed",
+        "account_ineligible",
+        "agent_execution_error"
+      ]
+    },
     "1.0.0-sample": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "patches": [

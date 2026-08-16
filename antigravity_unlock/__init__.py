@@ -1,7 +1,7 @@
 """
-Antigravity CLI Unlocker v1.0.1
-Cross-Platform Split-Tunnel Proxy & Binary Patcher
+Antigravity CLI Unlocker v1.1.0
+Cross-Platform Split-Tunnel Proxy, Version Pinner & Autostart Guardian
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 __author__ = "NakishN"

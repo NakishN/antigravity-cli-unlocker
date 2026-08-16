@@ -140,7 +140,10 @@ class SplitTunnelProxy:
         return any(norm == d or norm.endswith("." + d) for d in DIRECT_DOMAINS)
 
     def _should_mitm(self, hostname):
-        return False
+        norm = hostname.strip().lower().rstrip(".")
+        if self._is_direct(norm):
+            return False
+        return any(d in norm for d in ["generativelanguage", "daily-cloudcode-pa"])
 
     async def resolve_smart(self, hostname):
         """Resolves hostname using Smart DNS IP lookup if needed, or falls back to system DNS."""
@@ -261,6 +264,22 @@ def run_proxy_server(host="127.0.0.1", port=18888):
     finally:
         loop.run_until_complete(proxy.stop())
         loop.close()
+
+def _should_intercept_url(url_path):
+    """Returns True if the URL path corresponds to an eligibility check endpoint."""
+    return any(p in url_path for p in ("/v1internal:loadCodeAssist", "/v1internal:checkEligibility"))
+
+def _rewrite_eligibility(data):
+    """Rewrites region ineligibility responses to ELIGIBLE."""
+    if not isinstance(data, (bytes, bytearray)):
+        return data, False
+    changed = False
+    new_data = data
+    if b"NOT_ELIGIBLE_REGION_OUT_OF_SCOPE" in new_data or b"NOT_ELIGIBLE" in new_data:
+        new_data = new_data.replace(b"NOT_ELIGIBLE_REGION_OUT_OF_SCOPE", b"ELIGIBLE")
+        new_data = new_data.replace(b"NOT_ELIGIBLE", b"ELIGIBLE")
+        changed = True
+    return new_data, changed
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")

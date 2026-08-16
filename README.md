@@ -1,15 +1,18 @@
 # Antigravity CLI Unlocker
 
-Antigravity CLI Unlocker — инструментарий для обхода региональных ограничений и автоматической настройки DNS-маршрутизации для **Google Antigravity CLI (`agy`)**, **Antigravity IDE** и **Antigravity 2.0** на операционных системах Linux, macOS и Windows без использования VPN.
+Antigravity CLI Unlocker — кроссплатформенный инструментарий для обхода региональных ограничений, фиксации целевой версии (`1.1.9`) и автоматической настройки DNS-маршрутизации для **Google Antigravity CLI (`agy`)**, **Antigravity IDE** и **Antigravity 2.0** на операционных системах Linux, macOS и Windows без использования VPN.
 
 ---
 
 ## Описание проекта
 
-В регионах с ограничениями прямой доступ к эндпоинтам Google Generative AI (`generativelanguage.googleapis.com`) и сервисам авторизации блокируется на уровне граничных маршрутизаторов. Antigravity CLI Unlocker решает эту проблему следующими механизмами:
+В регионах с ограничениями прямой доступ к эндпоинтам Google Generative AI (`generativelanguage.googleapis.com`) и сервисам авторизации блокируется на уровне граничных маршрутизаторов, а автоматические обновления `agy` могут приводить к поломкам патчей. Antigravity CLI Unlocker решает эти проблемы следующими механизмами:
 
-1. **Патч региональных проверок (Eligibility Gate)**: Снятие внутренних геолокационных проверок в исполняемом файле `agy` / `agy.exe` (для архитектур x64 и ARM64).
-2. **Системная DNS-маршрутизация и Split-Tunnel Proxy**: Направление доменных имен Google API через специализированные DNS-шлюзы (`111.88.96.50` / `111.88.96.51`) или через изолированный локальный прокси (`run-wrapped` режим) без затрагивания сервисов авторизации `accounts.google.com`.
+1. **Фиксация версии (Version Pinning 1.1.9)**: Создает эталонный бэкап стабильной версии `1.1.9` (`agy.pinned.bak`), контролирует совпадение хэшей SHA-256 и размера файла и автоматически возвращает бинарник к версии `1.1.9` при попытках автоматического обновления.
+2. **Фоновый демон Guardian**: Отслеживает бинарник `agy` с помощью таймера (каждые 30 секунд) и файловых событий (`watchdog`) и мгновенно восстанавливает версию `1.1.9` с перепатчиванием.
+3. **Кроссплатформенный автозапуск (Autostart)**: Автоматическая регистрация демона Guardian в службах автозапуска операционной системы: `systemd` (Linux), `Task Scheduler / schtasks` (Windows), `launchd` (macOS).
+4. **Патч региональных проверок (Eligibility Gate)**: Автоматический байпас внутренних геолокационных проверок в исполняемом файле `agy` / `agy.exe`.
+5. **Системная DNS-маршрутизация и Split-Tunnel Proxy**: Направление доменных имен Google API через специализированные DNS-шлюзы (`111.88.96.50` / `111.88.96.51`) или через локальный прокси (`run` режим) без затрагивания авторизации `accounts.google.com`.
 
 ---
 
@@ -17,78 +20,66 @@ Antigravity CLI Unlocker — инструментарий для обхода р
 
 | Параметр | Значение |
 | :--- | :--- |
-| **Поддерживаемые ОС** | Ubuntu 24.04, Debian, Arch Linux, Fedora, macOS, Windows 10, Windows 11 |
-| **Поддерживаемые компоненты** | Antigravity CLI (`agy`), Antigravity IDE, Antigravity 2.0 |
+| **Поддерживаемые ОС** | Ubuntu 24.04+, Debian, Arch Linux, Fedora, macOS, Windows 10, Windows 11 |
+| **Фиксация версии** | Защита от автообновления, удерживает `1.1.9` с автопатчингом |
+| **Автозапуск** | `systemd user unit` (Linux), `Task Scheduler` (Windows), `launchd` (macOS) |
 | **Требования к сети** | Использование VPN не требуется |
-| **Готовые релизы** | Готовые бинарники `.AppImage` (Linux), `.exe` (Windows), автономные исполняемые файлы |
-| **Безопасность** | Вычисление SHA256, авто-бэкап бинарника перед патчем, аргумент `--dry-run`, команда отката (`--restore`) |
+| **Безопасность** | Проверка SHA256, резервные копии (`.original.bak`, `.pinned.bak`), `--dry-run`, `--restore` |
 
 ---
 
-## Установка и запуск
+## Установка и автозапуск
 
-### Вариант 1: Использование готовых релизов (.AppImage / .exe)
+### 1. Автозапуск и фиксация 1.1.9 (Рекомендуется)
 
-Скачайте релиз со страницы **[GitHub Releases](https://github.com/NakishN/antigravity-cli-unlocker/releases)**:
-
-#### Linux (.AppImage / бинарник)
+#### Linux
 ```bash
-chmod +x Antigravity_Unlocker-x86_64.AppImage
-./Antigravity_Unlocker-x86_64.AppImage run -- agy login
+./antigravity_unlock_linux.sh --autostart
 ```
 
-#### Windows (.exe)
-```powershell
-.\antigravity-unlock-windows-x64.exe run -- agy login
+#### macOS
+```bash
+chmod +x antigravity_unlock_macos.sh
+./antigravity_unlock_macos.sh --autostart
 ```
+
+#### Windows (PowerShell / Batch)
+```powershell
+.\antigravity_unlock_windows.ps1 -Autostart
+```
+*Или запустите `antigravity_unlock_windows.bat` от имени Администратора.*
 
 ---
 
-### Вариант 2: Запуск из исходников
+## CLI Команды (`antigravity-unlock` / `antigravity_unlock.py`)
 
-#### Linux & macOS
-
-Выполните команду установки:
+Проект предоставляет единый интерфейс командной строки:
 
 ```bash
-git clone https://github.com/NakishN/antigravity-cli-unlocker.git
-cd antigravity-cli-unlocker
-chmod +x antigravity_unlock_linux.sh
-./antigravity_unlock_linux.sh
+# Проверить статус системы, бинарников agy, закрепленной версии и службы автозапуска
+python3 antigravity_unlock.py status
+
+# Установить службу автозапуска Guardian
+python3 antigravity_unlock.py autostart install
+
+# Проверить статус автозапуска
+python3 antigravity_unlock.py autostart status
+
+# Удалить службу автозапуска
+python3 antigravity_unlock.py autostart remove
+
+# Инициализировать фиксацию версии 1.1.9
+python3 antigravity_unlock.py pin init
+
+# Принудительно проверить и вернуть версию 1.1.9 при необходимости
+python3 antigravity_unlock.py pin check
+
+# Запустить фоновый демон Guardian в переднем плане
+python3 antigravity_unlock.py guardian
+
+# Запустить agy через локальный Split-Tunnel прокси
+python3 antigravity_unlock.py run -- agy login
 ```
-
-##### Дополнительные аргументы:
-- `run -- agy <команда>`: Запустить `agy` с изолированным Split-Tunnel прокси.
-- `--dry-run`: Выполнить проверку и расчет SHA-256 без внесения физических изменений в файл.
-- `--force`: Принудительно выполнить патч даже при неизвестном хэше.
-- `--restore`: Восстановить исходный бинарник из резервной копии.
-
----
-
-### Windows (10 / 11)
-
-#### Способ 1: Запуск bat-файла (Рекомендуется)
-1. Скачайте или клонируйте репозиторий.
-2. Нажмите правой кнопкой мыши по файлу **`antigravity_unlock_windows.bat`** и выберите **«Запуск от имени администратора»**.
-
-#### Способ 2: Запуск через PowerShell (Администратор)
-Откройте PowerShell от имени администратора и выполните:
-
-```powershell
-Set-ExecutionPolicy Unrestricted -Scope Process -Force
-.\antigravity_unlock_windows.ps1
-```
-
----
-
-## Безопасность и архитектура DNS
-
-### Уведомление о DNS-серверах и прокси
-По умолчанию система настраивает маршрутизацию доменов `generativelanguage.googleapis.com` через проверенные публичные серверы сообщества Smart DNS (`111.88.96.50` / `111.88.96.51`) или локальный прокси. При этом трафик авторизации `accounts.google.com` пускается напрямую (DIRECT) для предотвращения любых рисков безопасности.
-
-- На **Linux** под управлением `systemd-resolved` создается отдельный изолированный файл правил `/etc/systemd/resolved.conf.d/antigravity-unlock.conf`.
-- На **Windows** определяется активный сетевой маршрут по умолчанию (`Get-NetRoute -DestinationPrefix "0.0.0.0/0"`).
-- Логи работы сохраняются в системный файл: `~/.local/share/antigravity-unlocker/unlocker.log`.
 
 ---
 
@@ -96,9 +87,14 @@ Set-ExecutionPolicy Unrestricted -Scope Process -Force
 
 Для полного восстановления оригинального файла `agy` и сброса сетевых настроек DNS:
 
-### Linux / macOS
+### Linux
 ```bash
 ./antigravity_unlock_linux.sh --restore
+```
+
+### macOS
+```bash
+./antigravity_unlock_macos.sh --restore
 ```
 
 ### Windows
@@ -114,7 +110,7 @@ Set-ExecutionPolicy Unrestricted -Scope Process -Force
 
 > [!NOTE]
 > Вы можете создать обращение в разделе [GitHub Issues](https://github.com/NakishN/antigravity-cli-unlocker/issues).
-> Также можете вступить в телеграмм группу, где буду ещё многое публиковать https://t.me/NakishN
+> Телеграмм группа проекта: https://t.me/NakishN
 
 ---
 

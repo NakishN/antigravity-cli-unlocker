@@ -1,12 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('/home/nwk/Загрузки/antigravity-cli-unlocker/antigravity_unlock/versions.json', 'antigravity_unlock')]
+binaries = []
+hiddenimports = []
+tmp_ret = collect_all('cryptography')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['/home/nwk/Загрузки/antigravity-cli-unlocker/antigravity_unlock/__main__.py'],
     pathex=[],
-    binaries=[],
-    datas=[('/home/nwk/Загрузки/antigravity-cli-unlocker/antigravity_unlock/versions.json', 'antigravity_unlock')],
-    hiddenimports=[],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

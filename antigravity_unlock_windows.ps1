@@ -1,13 +1,19 @@
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║                  Antigravity CLI Unlocker v2.2.0                     ║
-# ║        Обход региональных ограничений и DNS для Windows              ║
+# ║                  Antigravity CLI Unlocker v2.3.0                     ║
+# ║   Обход региональных ограничений, фиксация 1.1.9 & автозапуск (Windows)║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 [CmdletBinding()]
 param (
     [switch]$Restore,
     [switch]$DryRun,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Autostart,
+    [switch]$RemoveAutostart,
+    [switch]$PinInit,
+    [switch]$PinCheck,
+    [switch]$Guardian,
+    [switch]$Status
 )
 
 $IssuesUrl = "https://github.com/NakishN/antigravity-cli-unlocker/issues"
@@ -15,8 +21,8 @@ $PythonCore = Join-Path $PSScriptRoot "antigravity_unlock.py"
 
 $Host.UI.RawUI.ForegroundColor = 'Cyan'
 Write-Host "===================================================================="
-Write-Host "                  Antigravity CLI Unlocker v2.2.0                   "
-Write-Host "        Обход региональных ограничений и DNS для Windows            "
+Write-Host "                  Antigravity CLI Unlocker v2.3.0                   "
+Write-Host "     Обход региональных ограничений, фиксация 1.1.9 & автозапуск    "
 Write-Host "===================================================================="
 $Host.UI.RawUI.ForegroundColor = 'Gray'
 Write-Host ""
@@ -44,16 +50,49 @@ function Invoke-PythonCore {
         exit 1
     }
 
-    & python $PythonCore $ScriptArgs
+    $py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } else { "python3" }
+    & $py $PythonCore $ScriptArgs
+}
+
+# ── Автозапуск / Guardian / Pin / Status ─────────────────
+if ($Autostart) {
+    Write-Host "[!] Установка автозапуска Guardian daemon..." -ForegroundColor Yellow
+    Invoke-PythonCore -ScriptArgs @("autostart", "install")
+    exit 0
+}
+
+if ($RemoveAutostart) {
+    Write-Host "[!] Удаление автозапуска Guardian daemon..." -ForegroundColor Yellow
+    Invoke-PythonCore -ScriptArgs @("autostart", "remove")
+    exit 0
+}
+
+if ($Guardian) {
+    Invoke-PythonCore -ScriptArgs @("guardian")
+    exit 0
+}
+
+if ($PinInit) {
+    Invoke-PythonCore -ScriptArgs @("pin", "init")
+    exit 0
+}
+
+if ($PinCheck) {
+    Invoke-PythonCore -ScriptArgs @("pin", "check")
+    exit 0
+}
+
+if ($Status) {
+    Invoke-PythonCore -ScriptArgs @("status")
+    exit 0
 }
 
 # ── Откат изменений ─────────────────────────────────────────────────────
 if ($Restore) {
     Write-Host "[!] Запуск восстановления через Python Core..." -ForegroundColor Yellow
-    Invoke-PythonCore -ScriptArgs @("--restore")
+    Invoke-PythonCore -ScriptArgs @("restore")
 
     try {
-        # Определяем интерфейс по умолчанию по маршруту 0.0.0.0/0
         $DefaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
         if ($DefaultRoute) {
             $Adapter = Get-NetAdapter | Where-Object InterfaceIndex -eq $DefaultRoute.InterfaceIndex
@@ -72,14 +111,14 @@ if ($Restore) {
 }
 
 # ── ШАГ 1: Обработка бинарника agy.exe через Python-модуль ─────────────
-Write-Host "[1/2] Обработка бинарника через Python Core v2.2.0..." -ForegroundColor Magenta
+Write-Host "[1/2] Обработка бинарника и фиксация версии 1.1.9..." -ForegroundColor Magenta
 $PyArgs = @()
 if ($DryRun) { $PyArgs += "--dry-run" }
 if ($Force)  { $PyArgs += "--force" }
 
 Invoke-PythonCore -ScriptArgs $PyArgs
 
-# ── ШАГ 2: Умная настройка DNS на интерфейсе по умолчанию ──────────────
+# ── ШАГ 2: Настройка DNS на интерфейсе по умолчанию ──────────────
 Write-Host "`n[2/2] Настройка системной DNS-маршрутизации..." -ForegroundColor Magenta
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -89,7 +128,6 @@ if (-not $isAdmin) {
     Write-Host "  [ИНФО] Перезапустите PowerShell от имени администратора." -ForegroundColor Yellow
 } else {
     try {
-        # Умный поиск активного адаптера с маршрутом по умолчанию
         $DefaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
         if ($DefaultRoute) {
             $Adapter = Get-NetAdapter | Where-Object InterfaceIndex -eq $DefaultRoute.InterfaceIndex
@@ -113,7 +151,9 @@ if (-not $isAdmin) {
 Write-Host "`n====================================================================" -ForegroundColor Green
 Write-Host "             Разблокировка Antigravity CLI завершена                " -ForegroundColor Green
 Write-Host "====================================================================`n" -ForegroundColor Green
-Write-Host "  Запуск:    agy" -ForegroundColor White
-Write-Host "  Откат:     .\antigravity_unlock_windows.ps1 -Restore" -ForegroundColor Gray
-Write-Host "  Тест:      .\antigravity_unlock_windows.ps1 -DryRun" -ForegroundColor Gray
-Write-Host "  Поддержка: $IssuesUrl" -ForegroundColor Cyan
+Write-Host "  Запуск:         agy" -ForegroundColor White
+Write-Host "  Автозапуск:     .\antigravity_unlock_windows.ps1 -Autostart" -ForegroundColor Gray
+Write-Host "  Удаление авто:  .\antigravity_unlock_windows.ps1 -RemoveAutostart" -ForegroundColor Gray
+Write-Host "  Откат:          .\antigravity_unlock_windows.ps1 -Restore" -ForegroundColor Gray
+Write-Host "  Тест:           .\antigravity_unlock_windows.ps1 -DryRun" -ForegroundColor Gray
+Write-Host "  Поддержка:      $IssuesUrl" -ForegroundColor Cyan
