@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from antigravity_unlock.config import load_config
+from antigravity_unlock.config import DEFAULT_STRATEGY, load_config
 from antigravity_unlock.discovery import get_primary_agy
 from antigravity_unlock.logging_utils import get_logger
 from antigravity_unlock.pinner import enforce_strategy
@@ -61,7 +61,7 @@ def run_guardian(stop_event=None, strategy=None):
     config = load_config()
     interval = max(5, int(config.get("check_interval_seconds", 30)))
     agy_path = get_primary_agy()
-    active_strategy = strategy or config.get("strategy", "in_place")
+    active_strategy = strategy or config.get("strategy", DEFAULT_STRATEGY)
 
     logger.info(
         "Guardian started (strategy=%s, pinned=%s, interval=%ss, watchdog=%s)",
