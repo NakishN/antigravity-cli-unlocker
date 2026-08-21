@@ -2,6 +2,23 @@
 
 All notable changes to the Antigravity CLI Unlocker project will be documented in this file.
 
+## [1.2.0] - 2026-08-21
+
+### Added
+- **Machine Code Eligibility Patch for v1.1.17+**: Added x86_64 machine code `.text` byte patches for `backend.(*AuthStatus).EligibilityError` and `backend.IneligibilityFromResult` to completely bypass Go runtime eligibility checks in newer stripped binaries.
+- **Dynamic Binary Pinning**: Enhanced version pinner to automatically detect and preserve installed binary versions.
+
+### Fixed
+- **Pinner Configuration**: Resolved size and checksum mismatches in `config.json` during binary pinning cycles.
+
+## [1.1.0] - 2026-08-17
+
+### Added
+- **Version Pinning System**: Added `agy` binary version pinning with automatic rollback protection.
+- **Guardian Daemon**: Background monitor to enforce pinned versions and prevent automatic client overwrites.
+- **Autostart Service**: Cross-platform service management (systemd, Windows Task Scheduler, macOS launchd).
+- **Atomic File Replacement**: Safe binary substitution on Linux preventing `ETXTBSY` (Text file busy) errors.
+
 ## [1.0.1] - 2026-08-06
 
 ### Fixed
