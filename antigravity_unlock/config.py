@@ -7,10 +7,16 @@ import os
 
 from antigravity_unlock.patcher import get_app_dir
 
-DEFAULT_PINNED_VERSION = "1.1.16"
+STRATEGY_AUTO = "auto"
+STRATEGY_IN_PLACE = "in_place"
+STRATEGY_PIN = "pin"
+
+DEFAULT_STRATEGY = STRATEGY_AUTO
+DEFAULT_PINNED_VERSION = "1.1.9"
 DEFAULT_CHECK_INTERVAL = 30
 
 DEFAULT_CONFIG = {
+    "strategy": DEFAULT_STRATEGY,
     "pinned_version": DEFAULT_PINNED_VERSION,
     "pinned_sha256": "",
     "pinned_size": 0,

@@ -1,5 +1,5 @@
 """
-Background guardian that keeps agy pinned to the configured version.
+Background guardian that keeps agy patched and protected according to active strategy.
 """
 
 import os
@@ -9,7 +9,7 @@ import time
 from antigravity_unlock.config import load_config
 from antigravity_unlock.discovery import get_primary_agy
 from antigravity_unlock.logging_utils import get_logger
-from antigravity_unlock.pinner import ensure_pinned
+from antigravity_unlock.pinner import enforce_strategy
 
 logger = get_logger()
 
@@ -46,8 +46,8 @@ class AgyWatchHandler(FileSystemEventHandler):
             self._maybe_trigger(event.dest_path)
 
 
-def _run_check(trigger="scheduled"):
-    ok, msg, changed = ensure_pinned()
+def _run_check(trigger="scheduled", strategy=None):
+    ok, msg, changed = enforce_strategy(strategy=strategy)
     if changed:
         logger.info("[%s] %s", trigger, msg)
     elif not ok:
@@ -57,24 +57,26 @@ def _run_check(trigger="scheduled"):
     return ok
 
 
-def run_guardian(stop_event=None):
+def run_guardian(stop_event=None, strategy=None):
     config = load_config()
     interval = max(5, int(config.get("check_interval_seconds", 30)))
     agy_path = get_primary_agy()
+    active_strategy = strategy or config.get("strategy", "in_place")
 
     logger.info(
-        "Guardian started (pinned=%s, interval=%ss, watchdog=%s)",
+        "Guardian started (strategy=%s, pinned=%s, interval=%ss, watchdog=%s)",
+        active_strategy,
         config.get("pinned_version", "unknown"),
         interval,
         WATCHDOG_AVAILABLE,
     )
 
-    _run_check("startup")
+    _run_check("startup", strategy=active_strategy)
 
     observer = None
     if WATCHDOG_AVAILABLE and agy_path:
         watch_dir = os.path.dirname(os.path.abspath(agy_path)) or "."
-        handler = AgyWatchHandler(agy_path, lambda reason: _run_check(reason))
+        handler = AgyWatchHandler(agy_path, lambda reason: _run_check(reason, strategy=active_strategy))
         observer = Observer()
         observer.schedule(handler, watch_dir, recursive=False)
         observer.start()
@@ -85,7 +87,7 @@ def run_guardian(stop_event=None):
             if stop_event is not None and stop_event.is_set():
                 break
             time.sleep(interval)
-            _run_check("interval")
+            _run_check("interval", strategy=active_strategy)
     except KeyboardInterrupt:
         logger.info("Guardian interrupted, shutting down")
     finally:

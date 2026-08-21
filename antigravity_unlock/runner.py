@@ -11,8 +11,9 @@ import threading
 import subprocess
 
 from antigravity_unlock.discovery import get_primary_agy
-from antigravity_unlock.patcher import patch_binary
+from antigravity_unlock.pinner import enforce_strategy
 from antigravity_unlock.proxy import run_proxy_server
+
 
 def find_free_port():
     """Finds an available local port."""
@@ -20,7 +21,8 @@ def find_free_port():
         s.bind(('127.0.0.1', 0))
         return s.getsockname()[1]
 
-def run_wrapped_command(cmd_args, agy_path=None, auto_patch=True):
+
+def run_wrapped_command(cmd_args, agy_path=None, auto_patch=True, strategy=None):
     """
     Spawns local proxy, sets environment variables, runs child process, and cleans up.
     """
@@ -32,7 +34,7 @@ def run_wrapped_command(cmd_args, agy_path=None, auto_patch=True):
         return 1
 
     if auto_patch:
-        patch_binary(agy_path, dry_run=False)
+        enforce_strategy(agy_path=agy_path, strategy=strategy)
 
     port = find_free_port()
 

@@ -1,6 +1,6 @@
 """
-Version pinning for Antigravity CLI (agy).
-Keeps the primary agy binary on a pinned release and re-applies patches when needed.
+Version pinning and patch strategy management for Antigravity CLI (agy).
+Supports in-place patching of installed versions and rollback pinning to known working releases.
 """
 
 import os
@@ -12,6 +12,10 @@ import urllib.request
 
 from antigravity_unlock.config import (
     DEFAULT_PINNED_VERSION,
+    DEFAULT_STRATEGY,
+    STRATEGY_AUTO,
+    STRATEGY_IN_PLACE,
+    STRATEGY_PIN,
     load_config,
     save_config,
 )
@@ -80,6 +84,10 @@ def get_agy_version(agy_path):
 
 
 def _is_patched_binary(agy_path):
+    """
+    Checks whether the binary is confirmed to have patch signatures applied.
+    Returns True only if patched replacement signatures are present and unpatched are absent.
+    """
     vdb = load_versions_db()
     try:
         with open(agy_path, "rb") as f:
@@ -87,11 +95,19 @@ def _is_patched_binary(agy_path):
     except OSError:
         return False
 
+    has_unpatched = False
+    has_patched = False
     for wp in vdb.get("wildcard_patterns", []):
         orig_bytes = bytes.fromhex(wp["pattern"])
+        repl_bytes = bytes.fromhex(wp["replacement"])
         if orig_bytes in data:
-            return False
-    return True
+            has_unpatched = True
+        if repl_bytes in data:
+            has_patched = True
+
+    if has_unpatched:
+        return False
+    return has_patched
 
 
 def download_pinned_backup(agy_path=None, target_version=DEFAULT_PINNED_VERSION):
@@ -152,6 +168,7 @@ def init_pin(agy_path=None, pinned_version=None, source_path=None):
 
     config.update(
         {
+            "strategy": STRATEGY_PIN,
             "pinned_version": target_version,
             "pinned_sha256": pinned_sha,
             "pinned_size": pinned_size,
@@ -166,6 +183,18 @@ def init_pin(agy_path=None, pinned_version=None, source_path=None):
     )
     logger.info(msg)
     return True, msg
+
+
+def set_strategy(strategy, agy_path=None):
+    """Update active patch strategy in configuration."""
+    valid = (STRATEGY_AUTO, STRATEGY_IN_PLACE, STRATEGY_PIN)
+    if strategy not in valid:
+        return False, f"Unknown strategy: '{strategy}'. Choose from: {', '.join(valid)}."
+    config = load_config()
+    config["strategy"] = strategy
+    save_config(config)
+    logger.info("Active strategy updated to: %s", strategy)
+    return True, f"Patch strategy set to '{strategy}'."
 
 
 def _needs_restore(agy_path, config):
@@ -238,3 +267,56 @@ def ensure_pinned(agy_path=None, dry_run=False):
         return True, f"Restored and patched agy ({reason}): {patch_msg}", True
 
     return True, f"Restored agy ({reason}) without patching", True
+
+
+def enforce_strategy(agy_path=None, strategy=None, dry_run=False):
+    """
+    Enforces the requested (or configured) patch strategy on the target agy binary.
+
+    Strategies:
+    - 'auto': Attempts in-place patching on installed binary; falls back to pinned 1.1.9 backup if unsupported.
+    - 'in_place': Strictly patches current installed binary on the spot.
+    - 'pin': Strictly restores and pins to the configured backup version (1.1.9).
+    """
+    agy_path = agy_path or get_primary_agy()
+    if not agy_path:
+        return False, "agy binary not found.", False
+
+    config = load_config()
+    active_strategy = strategy or config.get("strategy", DEFAULT_STRATEGY)
+
+    if active_strategy == STRATEGY_PIN:
+        return ensure_pinned(agy_path=agy_path, dry_run=dry_run)
+
+    ver = get_agy_version(agy_path) or "unknown"
+
+    if _is_patched_binary(agy_path):
+        msg = f"agy ({ver}) already patched ({active_strategy} mode)"
+        logger.debug(msg)
+        return True, msg, False
+
+    if active_strategy == STRATEGY_IN_PLACE:
+        if dry_run:
+            return True, f"[DRY-RUN] Would patch agy ({ver}) in-place", False
+        success, patch_msg, _ = patch_binary(agy_path)
+        if not success or not _is_patched_binary(agy_path):
+            return False, f"Failed to patch agy ({ver}) in-place: {patch_msg}", False
+        msg = f"Patched agy ({ver}) in-place: {patch_msg}"
+        logger.info(msg)
+        return True, msg, True
+
+    # Auto strategy: Try in-place, fallback to pinned version if signatures missing
+    if dry_run:
+        target_v = config.get("pinned_version", DEFAULT_PINNED_VERSION)
+        return True, f"[DRY-RUN] Auto mode: would attempt in-place patch, fallback to pin {target_v}", False
+
+    success, patch_msg, _ = patch_binary(agy_path)
+    if success and _is_patched_binary(agy_path):
+        msg = f"Auto mode: Patched agy ({ver}) in-place: {patch_msg}"
+        logger.info(msg)
+        return True, msg, True
+
+    # In-place failed or unsupported on unknown binary, fallback to pinned backup
+    target_v = config.get("pinned_version", DEFAULT_PINNED_VERSION)
+    logger.warning("Auto mode: in-place patch unsupported on %s (%s). Falling back to pin %s", ver, patch_msg, target_v)
+    return ensure_pinned(agy_path=agy_path, dry_run=dry_run)

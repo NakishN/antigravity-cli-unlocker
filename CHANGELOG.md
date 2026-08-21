@@ -5,8 +5,12 @@ All notable changes to the Antigravity CLI Unlocker project will be documented i
 ## [1.2.0] - 2026-08-21
 
 ### Added
+- **Multi-Strategy Patch System**: Added user-selectable patch strategies (`auto`, `in_place`, `pin`):
+  - `auto` (Default): Attempts in-place machine code patching on the installed version; gracefully falls back to pinned `1.1.9` if an unsupported version is encountered.
+  - `in_place`: Directly patches the installed `agy` binary without rollback or downgrade.
+  - `pin`: Strictly enforces rolling back to and locking the verified `1.1.9` release.
 - **Machine Code Eligibility Patch for v1.1.17+**: Added x86_64 machine code `.text` byte patches for `backend.(*AuthStatus).EligibilityError` and `backend.IneligibilityFromResult` to completely bypass Go runtime eligibility checks in newer stripped binaries.
-- **Dynamic Binary Pinning**: Enhanced version pinner to automatically detect and preserve installed binary versions.
+- **CLI Strategy Options**: Added `--strategy {auto,in_place,pin}` flag to CLI commands and `pin strategy` subcommand to save default preference.
 
 ### Fixed
 - **Pinner Configuration**: Resolved size and checksum mismatches in `config.json` during binary pinning cycles.
