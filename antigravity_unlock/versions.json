@@ -22,6 +22,18 @@
   },
   "wildcard_patterns": [
     {
+      "name": "eligibility_error_gate",
+      "pattern": "493b66100f86ce000000554889e54883ec484885c00f84b3",
+      "replacement": "31c031dbc386ce000000554889e54883ec484885c00f84b3",
+      "description": "CODE PATCH (1.1.17): backend.(*AuthStatus).EligibilityError -> immediate `xor eax,eax; xor ebx,ebx; ret` = always nil error (eligible). Central gate read by store.userInputLoop, store.initAuth, printmode.waitForEligibility, entrypoints.classifyModels. This is the real unlock; the string patterns below are cosmetic."
+    },
+    {
+      "name": "ineligibility_from_result_gate",
+      "pattern": "4885c00f84af000000807808000f85a5",
+      "replacement": "e9b3000000af000000807808000f85a5",
+      "description": "CODE PATCH (1.1.17): backend.IneligibilityFromResult -> `jmp` to its own eligible epilogue (returns empty ineligibility reason). Defense-in-depth alongside eligibility_error_gate."
+    },
+    {
       "name": "eligibility_check_failed",
       "pattern": "656c69676962696c69747920636865636b206661696c6564",
       "replacement": "656c69676962696c69747920636865636b20627970617373",
@@ -38,6 +50,30 @@
       "pattern": "4167656e7420657865637574696f6e207465726d696e617465642064756520746f206572726f722e",
       "replacement": "4167656e7420657865637574696f6e207465726d696e617465642c206572726f722068696464656e",
       "description": "Masks error termination UI string"
+    },
+    {
+      "name": "protobuf_name_ineligible",
+      "pattern": "6e616d653d696e656c696769626c65",
+      "replacement": "6e616d653d696e6578696769626c65",
+      "description": "Bypasses protobuf name=ineligible field descriptor"
+    },
+    {
+      "name": "eligibility_check_failed_cap",
+      "pattern": "456c69676962696c69747920636865636b206661696c6564",
+      "replacement": "456c69676962696c69747920636865636b20627970617373",
+      "description": "Bypasses Capitalized Eligibility check failed string in v1.1.17+"
+    },
+    {
+      "name": "not_eligible_region_out_of_scope",
+      "pattern": "4e4f545f454c494749424c455f524547494f4e5f4f55545f4f465f53434f5045",
+      "replacement": "454c494749424c455f524547494f4e5f494e5f53434f50455f5f5f5f5f5f5f5f",
+      "description": "Rewrites NOT_ELIGIBLE_REGION_OUT_OF_SCOPE enum string"
+    },
+    {
+      "name": "not_eligible_application_out_of_scope",
+      "pattern": "4e4f545f454c494749424c455f4150504c49434154494f4e5f4f55545f4f465f53434f5045",
+      "replacement": "454c494749424c455f4150504c49434154494f4e5f494e5f53434f50455f5f5f5f5f5f5f5f",
+      "description": "Rewrites NOT_ELIGIBLE_APPLICATION_OUT_OF_SCOPE enum string"
     }
   ]
 }

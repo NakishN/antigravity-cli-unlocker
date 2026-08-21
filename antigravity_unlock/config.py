@@ -7,7 +7,7 @@ import os
 
 from antigravity_unlock.patcher import get_app_dir
 
-DEFAULT_PINNED_VERSION = "1.1.9"
+DEFAULT_PINNED_VERSION = "1.1.16"
 DEFAULT_CHECK_INTERVAL = 30
 
 DEFAULT_CONFIG = {

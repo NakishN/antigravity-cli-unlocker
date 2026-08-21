@@ -37,13 +37,13 @@ def get_pinned_backup_path(agy_path=None):
 
 
 def _find_source_for_pin(agy_path):
-    """Prefer an existing original backup, then the current binary."""
+    """Prefer current binary if present, fallback to backup."""
+    if agy_path and os.path.isfile(agy_path):
+        return agy_path
+
     original_backup = get_backup_path(agy_path)
     if os.path.isfile(original_backup):
         return original_backup
-
-    if agy_path and os.path.isfile(agy_path):
-        return agy_path
 
     return None
 
@@ -123,11 +123,12 @@ def init_pin(agy_path=None, pinned_version=None, source_path=None):
         return False, "agy binary not found."
 
     config = load_config()
-    target_version = pinned_version or config.get("pinned_version") or DEFAULT_PINNED_VERSION
     source = source_path or _find_source_for_pin(agy_path)
+    source_version = get_agy_version(source) if source else None
+
+    target_version = pinned_version or source_version or config.get("pinned_version") or DEFAULT_PINNED_VERSION
     pinned_backup = get_pinned_backup_path(agy_path)
 
-    source_version = get_agy_version(source) if source else None
     if not source or (source_version and source_version != target_version):
         # Try downloading pinned backup from GitHub release asset as fallback
         dl_ok, dl_msg = download_pinned_backup(agy_path=agy_path, target_version=target_version)
@@ -136,8 +137,9 @@ def init_pin(agy_path=None, pinned_version=None, source_path=None):
         else:
             if source_version:
                 return False, (
-                    f"Source binary version is {source_version}, expected {target_version}. "
-                    f"Provide a {target_version} backup or download it manually."
+                    f"Current system binary version is {source_version}, but requested --version is {target_version}. "
+                    f"To pin current installed version {source_version}, run without --version. "
+                    f"To pin {target_version}, specify --source /path/to/agy_{target_version}."
                 )
             return False, "No source binary found for pin init."
 
