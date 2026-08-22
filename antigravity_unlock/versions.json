@@ -9,6 +9,17 @@
         "protobuf_ineligible"
       ]
     },
+    "1.1.18": {
+      "description": "Antigravity CLI 1.1.18 - verified. Machine-code eligibility gates are byte-identical to 1.1.17, so the existing wildcard code patches apply unchanged (each matches exactly once). Documentation-only entry: no top-level sha256 so patch_binary keeps using the size-preserving wildcard patterns. sha256(original)=60eb243a68bfbc1bffa3823c7fb90df27a72502550b333c6248fc55f20d02564, sha256(patched)=ee53c42674e6ea44a1636cecc67a26724cd773b9e5f7f73b1a37921e40fb9df9",
+      "wildcard_patterns": [
+        "eligibility_error_gate",
+        "ineligibility_from_result_gate",
+        "eligibility_check_failed_cap",
+        "not_eligible_region_out_of_scope",
+        "not_eligible_application_out_of_scope",
+        "protobuf_name_ineligible"
+      ]
+    },
     "1.0.0-sample": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "patches": [

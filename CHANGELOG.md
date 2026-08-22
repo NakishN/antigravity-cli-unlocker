@@ -2,6 +2,14 @@
 
 All notable changes to the Antigravity CLI Unlocker project will be documented in this file.
 
+## [1.2.1] - 2026-08-22
+
+### Added
+- **Verified v1.1.18 Support**: Registered `1.1.18` in `versions.json`. Its machine-code eligibility gates (`backend.(*AuthStatus).EligibilityError`, `backend.IneligibilityFromResult`) are byte-identical to `1.1.17`, so the existing size-preserving wildcard code patches apply unchanged (each matches exactly once). Recorded verified original/patched SHA-256 hashes for the release. Updated README supported-version matrix.
+
+### Fixed
+- **Test Isolation Leaking Into Live Config**: `tests/test_pinner.py` mocked only `pinner.get_app_dir`, but `config.py`/`logging_utils.py` hold their own `get_app_dir` bindings, so `save_config()` wrote the real `~/.local/share/antigravity-unlocker/config.json` during test runs. A 58-byte dummy pin fixture leaked in as `strategy=pin, pinned_size=58`, which made the guardian roll freshly installed releases back to `1.1.9`. Added an autouse `conftest.py` fixture that redirects every `get_app_dir` binding to a temp directory so tests can no longer mutate real user state.
+
 ## [1.2.0] - 2026-08-21
 
 ### Added

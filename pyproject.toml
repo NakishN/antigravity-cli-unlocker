@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "antigravity-cli-unlocker"
-version = "1.2.0"
+version = "1.2.1"
 description = "Cross-Platform Split-Tunnel Proxy, Multi-Strategy Patcher & Autostart Guardian for Google Antigravity CLI (agy)"
 readme = "README.md"
 authors = [{ name = "NakishN" }]
