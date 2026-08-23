@@ -2,6 +2,15 @@
 
 All notable changes to the Antigravity CLI Unlocker project will be documented in this file.
 
+## [1.2.2] - 2026-08-23
+
+### Added
+- **Verified v1.1.19 Support**: Registered `1.1.19` in `versions.json`. Its machine-code eligibility gates (`backend.(*AuthStatus).EligibilityError`, `backend.IneligibilityFromResult`) remain byte-identical to `1.1.17`/`1.1.18`, so the existing size-preserving wildcard code patches apply unchanged (`eligibility_error_gate` 1x, `ineligibility_from_result_gate` 1x). Confirmed by disassembly of the `.text` gate sites and end-to-end: the patched binary returns a model response to `agy -p` instead of `Eligibility check failed: ... not currently available in your location`. Recorded verified original/patched SHA-256 hashes and updated the README supported-version matrix.
+- **Version-registry test**: Added `tests/test_versions.py` asserting the `1.1.19` entry exists and references both machine-code gate patterns, and that every version's `wildcard_patterns` resolve to defined top-level patterns.
+
+### Notes
+- No new patch logic was required: `agy` had auto-updated to `1.1.19`, replacing the patched binary with a fresh unpatched one. Re-running the unlocker (`strategy=in_place`/`auto`) re-applies the patch. Install the Guardian autostart service (`--autostart`) to re-patch automatically after future auto-updates.
+
 ## [1.2.1] - 2026-08-22
 
 ### Added
