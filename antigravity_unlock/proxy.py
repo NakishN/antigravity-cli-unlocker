@@ -45,6 +45,16 @@ REFERENCE_RESOLVERS = ["8.8.8.8", "1.1.1.1"]
 # provider look substituted, so they are dropped before comparison.
 REFERENCE_STUBS = {"8.6.112.0", "8.47.69.0"}
 
+# Known SNI proxy IPs that accept TLS with Google SNI and forward to the
+# real server.  Used as last resort when no Smart DNS provider substitutes.
+# These are verified to complete TLS handshakes for the target domains.
+# Source: confeden/Antigravity project, verified 2026-08-28.
+FALLBACK_PROXY_IPS = {
+    "daily-cloudcode-pa.googleapis.com": ["45.155.204.190", "37.230.192.51"],
+    "cloudcode-pa.googleapis.com":       ["45.155.204.190", "37.230.192.51"],
+    "generativelanguage.googleapis.com":  ["87.228.47.204", "87.228.47.194"],
+}
+
 # Memory cache: {hostname: (resolved_ip, provider_name, expiry_timestamp)}
 DNS_CACHE = {}
 CACHE_TTL = 300  # seconds
@@ -173,7 +183,22 @@ def resolve_smart_dns(hostname, *_unused):
                 f"for {hostname} ({answer}), trying next provider"
             )
 
-    # No provider substituted — return hostname for system DNS.
+    # No provider substituted — try fallback SNI proxy IPs.
+    fallbacks = FALLBACK_PROXY_IPS.get(norm_host)
+    if fallbacks:
+        for fb_ip in fallbacks:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2.0)
+                s.connect((fb_ip, 443))
+                s.close()
+                DNS_CACHE[norm_host] = (fb_ip, "fallback-sni-proxy", now + CACHE_TTL)
+                logger.info(f"Smart DNS: no substitution for {hostname}, using fallback SNI proxy {fb_ip}")
+                return fb_ip
+            except Exception:
+                continue
+        logger.warning(f"Smart DNS: all fallback IPs dead for {hostname}")
+
     logger.debug(f"Smart DNS: no provider substituted {hostname}")
     return hostname
 

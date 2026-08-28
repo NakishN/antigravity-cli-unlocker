@@ -2,6 +2,21 @@
 
 All notable changes to the Antigravity CLI Unlocker project will be documented in this file.
 
+## [1.4.0] - 2026-08-28
+
+### Added
+- **SNI proxy bypass (ключевое)**: Новый механизм обхода серверной проверки `FAILED_PRECONDITION: User location is not supported`. Домены `daily-cloudcode-pa.googleapis.com`, `cloudcode-pa.googleapis.com` и `generativelanguage.googleapis.com` пиннятся к geohide.ru SNI-прокси (`45.155.204.190`) через `/etc/hosts`. Прокси принимает TLS с оригинальным SNI и пересылает запрос на реальный сервер Google, обходя IP-геоблокировку.
+- **DNS shim (LD_PRELOAD)**: Альтернативный механизм без root-прав. C-библиотека `dns_shim.c` перехватывает `getaddrinfo()` и подменяет DNS-ответы для целевых доменов. Компилируется автоматически при первом запуске.
+- **Команда `setup`**: `sudo antigravity-unlock setup apply` — добавляет SNI proxy записи в `/etc/hosts`. `setup remove` — удаляет. `setup status` — проверяет статус.
+- **`GODEBUG=http2client=0`**: Автоматически устанавливается в runner для принудительного HTTP/1.1 (SNI-прокси не поддерживает HTTP/2 ALPN).
+- **Модуль `hosts_manager.py`**: Управление записями `/etc/hosts` с маркерами для безопасного добавления/удаления.
+- **Модуль `shim_builder.py`**: Автоматическая компиляция `dns_shim.so` из C-исходника.
+- **Fallback SNI proxy IPs в proxy.py**: Когда Smart DNS провайдеры не подменяют домен, прокси использует известные рабочие SNI proxy IP.
+
+### Fixed
+- **Обход бага agy v1.1.21+**: Модельные вызовы (`streamGenerateContent`) обходят `HTTPS_PROXY` — решено через hosts pinning + DNS shim.
+- **HTTP/2 hang**: SNI-прокси не поддерживает ALPN — решено через `GODEBUG=http2client=0`.
+
 ## [1.3.0] - 2026-08-28
 
 ### Added

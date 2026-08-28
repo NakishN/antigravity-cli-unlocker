@@ -205,6 +205,13 @@ def main():
     ep_sub.add_parser("remove", help="Remove IDE endpoint override")
     ep_sub.add_parser("status", help="Show current endpoint status")
 
+    # Command: setup (hosts pinning for SNI proxy)
+    setup_parser = subparsers.add_parser("setup", help="System-wide setup (hosts pinning, requires sudo)")
+    setup_sub = setup_parser.add_subparsers(dest="setup_subcommand", help="Setup actions")
+    setup_sub.add_parser("apply", help="Add SNI proxy entries to /etc/hosts (requires root)")
+    setup_sub.add_parser("remove", help="Remove SNI proxy entries from /etc/hosts (requires root)")
+    setup_sub.add_parser("status", help="Show hosts pinning status")
+
     # Legacy & convenience flags
     parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
@@ -371,6 +378,46 @@ def main():
             sys.exit(0 if ok else 1)
         else:
             status_cmd()
+
+    elif args.command == "setup":
+        from antigravity_unlock.hosts_manager import pin, unpin, is_pinned
+        sub = getattr(args, "setup_subcommand", None) or "status"
+        print_banner()
+        if sub == "apply":
+            try:
+                pin()
+                print("  ✅ SNI proxy entries added to /etc/hosts")
+                print("  Domains pinned:")
+                for ip, domains in __import__('antigravity_unlock.hosts_manager', fromlist=['PROXY_IPS']).PROXY_IPS.items():
+                    for d in domains:
+                        print(f"    {d} -> {ip}")
+                print("\n  ⚠️  Re-authenticate agy after setup:")
+                print("    GODEBUG=http2client=0 agy logout")
+                print("    GODEBUG=http2client=0 antigravity-unlock run -- -p 'say hello'")
+            except PermissionError as e:
+                print(f"  ❌ {e}", file=sys.stderr)
+                sys.exit(1)
+            except Exception as e:
+                print(f"  ❌ Error: {e}", file=sys.stderr)
+                sys.exit(1)
+        elif sub == "remove":
+            try:
+                unpin()
+                print("  ✅ SNI proxy entries removed from /etc/hosts")
+            except PermissionError as e:
+                print(f"  ❌ {e}", file=sys.stderr)
+                sys.exit(1)
+            except Exception as e:
+                print(f"  ❌ Error: {e}", file=sys.stderr)
+                sys.exit(1)
+        else:  # status
+            pinned = is_pinned()
+            print(f"  Hosts pinning: {'✅ Active' if pinned else '❌ Not active'}")
+            if pinned:
+                print("  Run 'sudo antigravity-unlock setup remove' to unpin")
+            else:
+                print("  Run 'sudo antigravity-unlock setup apply' to pin")
+        sys.exit(0)
 
     else:
         # Default behavior: run status & enforce configured strategy
