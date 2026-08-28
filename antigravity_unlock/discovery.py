@@ -113,6 +113,46 @@ def get_primary_agy():
     found = find_agy_binaries()
     return found[0] if found else None
 
+def find_ide_installations():
+    """Scan standard locations for Antigravity IDE installs.
+
+    Returns a list of install root directories that contain
+    ``resources/app`` or an ``app.asar`` archive.
+    """
+    home = os.path.expanduser("~")
+    system = platform.system()
+    candidates = []
+
+    if system == "Windows":
+        local_app = os.environ.get("LOCALAPPDATA", os.path.join(home, "AppData", "Local"))
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        candidates.extend([
+            os.path.join(local_app, "Programs", "Antigravity IDE"),
+            os.path.join(local_app, "Antigravity IDE"),
+            os.path.join(prog_files, "Antigravity IDE"),
+            os.path.join(prog_files_x86, "Antigravity IDE"),
+        ])
+    elif system == "Darwin":
+        candidates.extend([
+            "/Applications/Antigravity IDE.app/Contents/Resources/app",
+            os.path.join(home, "Applications", "Antigravity IDE.app", "Contents", "Resources", "app"),
+        ])
+    else:
+        candidates.extend([
+            "/opt/Antigravity IDE",
+            "/opt/antigravity-ide",
+            os.path.join(home, "Applications", "Antigravity IDE"),
+            "/usr/share/antigravity-ide",
+        ])
+
+    results = []
+    for c in candidates:
+        if os.path.isdir(c):
+            results.append(c)
+    return results
+
+
 def inspect_discovery():
     """Returns detailed summary of discovered binaries and their source categories."""
     binaries = find_agy_binaries()

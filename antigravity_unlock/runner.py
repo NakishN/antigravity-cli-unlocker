@@ -49,12 +49,21 @@ def run_wrapped_command(cmd_args, agy_path=None, auto_patch=True, strategy=None)
 
     proxy_url = f"http://127.0.0.1:{port}"
 
+    # The daily-cloudcode-pa host is the same CloudCode service as
+    # cloudcode-pa but is still substituted by unblock DNS providers,
+    # while cloudcode-pa is no longer substituted by anyone.  Pointing
+    # the CLI at the daily host is the single most important fix:
+    # without it the binary patch alone cannot overcome server-side
+    # region blocking because the request still hits Google directly.
+    daily_endpoint = "https://daily-cloudcode-pa.googleapis.com"
+
     # Copy environment and inject local proxy vars ONLY for child process
     env = os.environ.copy()
     env["HTTP_PROXY"] = proxy_url
     env["HTTPS_PROXY"] = proxy_url
     env["http_proxy"] = proxy_url
     env["https_proxy"] = proxy_url
+    env["CLOUD_CODE_URL"] = daily_endpoint
 
     full_cmd = [agy_path] + cmd_args
 

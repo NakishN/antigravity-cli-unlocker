@@ -85,9 +85,10 @@ class TestPinner(unittest.TestCase):
         mock_app_dir.return_value = self.tmp_dir
         mock_pinned_bak.return_value = self.pinned_bak
 
-        # Write fresh 1.1.17 dummy content with wildcard signature
+        # Dummy binary must include the primary pattern (name=ineligible)
+        # so _is_patched_binary can detect the patch after applying.
         with open(self.agy_path, "wb") as f:
-            f.write(b"#!/bin/sh\necho agy version 1.1.17\neligibility check failed\n")
+            f.write(b"#!/bin/sh\necho agy version 1.1.17\neligibility check failed\nname=ineligible\n")
 
         ok, msg, changed = enforce_strategy(agy_path=self.agy_path, strategy=STRATEGY_IN_PLACE)
         self.assertTrue(ok)
@@ -96,7 +97,7 @@ class TestPinner(unittest.TestCase):
         with open(self.agy_path, "rb") as f:
             content = f.read()
         self.assertIn(b"1.1.17", content)
-        self.assertIn(b"eligibility check bypass", content)
+        self.assertIn(b"name=inexigible", content)
 
         # Subsequent call detects already patched
         ok2, msg2, changed2 = enforce_strategy(agy_path=self.agy_path, strategy=STRATEGY_IN_PLACE)
@@ -109,9 +110,9 @@ class TestPinner(unittest.TestCase):
         mock_app_dir.return_value = self.tmp_dir
         mock_pinned_bak.return_value = self.pinned_bak
 
-        # 1. Successful in-place in auto mode
+        # 1. Successful in-place in auto mode (must include primary pattern)
         with open(self.agy_path, "wb") as f:
-            f.write(b"#!/bin/sh\necho agy version 1.1.17\neligibility check failed\n")
+            f.write(b"#!/bin/sh\necho agy version 1.1.17\neligibility check failed\nname=ineligible\n")
 
         ok, msg, changed = enforce_strategy(agy_path=self.agy_path, strategy=STRATEGY_AUTO)
         self.assertTrue(ok)

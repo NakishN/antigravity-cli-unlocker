@@ -63,12 +63,39 @@ def restore_binary(agy_path):
         return True, f"Restored {agy_path} from {backup_file}"
     return False, f"Backup file not found at {backup_file}"
 
+def _current_platform_tag():
+    """Returns a tag like 'linux_x86_64' for platform-specific pattern filtering."""
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        machine = "x86_64"
+    return f"{platform.system().lower()}_{machine}"
+
+
+def _pattern_applicable(wp):
+    """True if a wildcard pattern applies to the current platform.
+
+    Patterns with no ``platform`` field are cross-platform (string literals
+    such as the protobuf rename).  Patterns with a ``platform`` list are
+    only applied when the current platform tag is in the list.
+    """
+    platforms = wp.get("platform")
+    if not platforms:
+        return True
+    tag = _current_platform_tag()
+    return tag in platforms
+
+
 def patch_binary(agy_path, dry_run=False, force=False):
     """
     Patches the agy binary.
     1. Check SHA-256 against versions.json
     2. Fallback to wildcard pattern byte matching if unknown
     3. Atomically write patched binary
+
+    The protobuf field rename (``name=ineligible`` -> ``name=inexigible``)
+    is the primary, cross-platform fix.  Machine-code patches (x86_64
+    instruction rewrites) are platform-specific enhancements and are only
+    applied when the current platform matches.
     """
     sha_orig = compute_sha256(agy_path)
     vdb = load_versions_db()
@@ -77,6 +104,8 @@ def patch_binary(agy_path, dry_run=False, force=False):
         data = bytearray(f.read())
 
     applied_details = []
+    skipped_platform = []
+    has_primary = False
 
     # Check exact SHA256 registry
     exact_match = None
@@ -102,16 +131,25 @@ def patch_binary(agy_path, dry_run=False, force=False):
             if len(orig_bytes) != len(repl_bytes):
                 continue  # Must preserve binary size
 
+            if not _pattern_applicable(wp):
+                skipped_platform.append(p_name)
+                continue
+
             count = data.count(orig_bytes)
             if count > 0:
                 data = bytearray(bytes(data).replace(orig_bytes, repl_bytes))
                 applied_details.append(f"Wildcard '{p_name}' ({count}x)")
+                if wp.get("primary"):
+                    has_primary = True
 
     if not applied_details:
         return True, "Binary is already patched or no matching signatures found.", sha_orig
 
     if dry_run:
-        return True, f"[DRY-RUN] Would apply: {', '.join(applied_details)}", sha_orig
+        msg = f"[DRY-RUN] Would apply: {', '.join(applied_details)}"
+        if skipped_platform:
+            msg += f" (skipped platform-specific: {', '.join(skipped_platform)})"
+        return True, msg, sha_orig
 
     # Backup original before modifying
     backup_binary(agy_path, dry_run=False)
@@ -125,7 +163,10 @@ def patch_binary(agy_path, dry_run=False, force=False):
         os.chmod(tmp_path, orig_mode)
         os.replace(tmp_path, agy_path)
         sha_patched = compute_sha256(agy_path)
-        return True, f"Patched: {', '.join(applied_details)}", sha_patched
+        msg = f"Patched: {', '.join(applied_details)}"
+        if skipped_platform:
+            msg += f" (skipped platform-specific: {', '.join(skipped_platform)})"
+        return True, msg, sha_patched
     except Exception as e:
         if os.path.exists(tmp_path):
             try: os.unlink(tmp_path)

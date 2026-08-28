@@ -86,13 +86,31 @@ def get_agy_version(agy_path):
 def _is_patched_binary(agy_path):
     """
     Checks whether the binary is confirmed to have patch signatures applied.
-    Returns True only if patched replacement signatures are present and unpatched are absent.
+    Returns True only if the primary cross-platform patch (protobuf rename)
+    is applied.  Platform-specific machine code patches are not required.
     """
     vdb = load_versions_db()
     try:
         with open(agy_path, "rb") as f:
             data = f.read()
     except OSError:
+        return False
+
+    # Check primary patterns first (cross-platform protobuf rename).
+    # If the primary replacement is present and the primary original
+    # is absent, the binary is considered patched regardless of
+    # platform-specific patterns.
+    for wp in vdb.get("wildcard_patterns", []):
+        if not wp.get("primary"):
+            continue
+        orig_bytes = bytes.fromhex(wp["pattern"])
+        repl_bytes = bytes.fromhex(wp["replacement"])
+        if repl_bytes in data and orig_bytes not in data:
+            return True
+
+    # Fallback: if no primary pattern is defined, check all patterns.
+    has_primary = any(wp.get("primary") for wp in vdb.get("wildcard_patterns", []))
+    if has_primary:
         return False
 
     has_unpatched = False

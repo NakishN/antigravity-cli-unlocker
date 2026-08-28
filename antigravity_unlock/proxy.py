@@ -27,13 +27,28 @@ DIRECT_DOMAINS = {
     "openidconnect.googleapis.com",
 }
 
-# Upstream Smart DNS servers for AI endpoints
-SMART_DNS_PRIMARY = "111.88.96.50"
-SMART_DNS_SECONDARY = "111.88.96.51"
+# Smart DNS providers that substitute Google/AI endpoints for blocked regions.
+# Each provider is queried in parallel; the first that returns a *substituted*
+# answer (different from reference resolvers) wins.
+SMART_DNS_PROVIDERS = [
+    {"name": "xbox-dns.ru", "ips": ["111.88.96.50", "111.88.96.51"]},
+    {"name": "comss.one",   "ips": ["83.220.169.155", "212.109.195.93"]},
+    {"name": "geohide.ru",  "ips": ["45.155.204.190", "37.230.192.51"]},
+]
 
-# Memory cache for resolved DNS entries: {hostname: (ip, expiry_timestamp)}
+# Reference resolvers known NOT to substitute anything.  Used to detect when
+# a provider has stopped substituting a name (its answer matches reference).
+REFERENCE_RESOLVERS = ["8.8.8.8", "1.1.1.1"]
+
+# ISP DPI stubs: some ISPs inject these addresses for blocked names instead
+# of the real answer.  A reference returning one of these would make every
+# provider look substituted, so they are dropped before comparison.
+REFERENCE_STUBS = {"8.6.112.0", "8.47.69.0"}
+
+# Memory cache: {hostname: (resolved_ip, provider_name, expiry_timestamp)}
 DNS_CACHE = {}
 CACHE_TTL = 300  # seconds
+
 
 def query_dns_server(hostname, dns_ip, timeout=1.5):
     """
@@ -63,7 +78,6 @@ def query_dns_server(hostname, dns_ip, timeout=1.5):
         for _ in range(ancount):
             if idx >= len(data):
                 break
-            # Skip domain name (handle compressed pointer 0xC0 or standard label)
             if data[idx] >= 192:
                 idx += 2
             else:
@@ -75,39 +89,92 @@ def query_dns_server(hostname, dns_ip, timeout=1.5):
 
             rtype, rclass, ttl, rdlength = struct.unpack(">HHIH", data[idx:idx + 10])
             idx += 10
-            if rtype == 1 and rdlength == 4 and idx + 4 <= len(data):  # IPv4 A record
+            if rtype == 1 and rdlength == 4 and idx + 4 <= len(data):
                 return socket.inet_ntoa(data[idx:idx + 4])
             idx += rdlength
     except Exception as e:
         logger.debug(f"DNS UDP query error for {hostname} via {dns_ip}: {e}")
     return None
 
-def resolve_smart_dns(hostname, primary=SMART_DNS_PRIMARY, secondary=SMART_DNS_SECONDARY):
+
+def _query_first_answer(hostname, ips, timeout=1.5):
+    """Query a list of IPs, returning the first successful A-record answer."""
+    for ip in ips:
+        result = query_dns_server(hostname, ip, timeout=timeout)
+        if result:
+            return result
+    return None
+
+
+def _is_substituted(provider_answer, reference_answers):
+    """True if *provider_answer* differs from all valid reference answers.
+
+    An answer equal to a reference answer means the provider is just
+    forwarding the real Google IP — no substitution happened.
     """
-    Resolves hostname via Smart DNS with memory caching and fallback.
-    Returns resolved IP address string or original hostname on failure.
+    if not provider_answer:
+        return False
+    if not reference_answers:
+        # No reference available — trust the provider (better than nothing).
+        return True
+    return provider_answer not in reference_answers
+
+
+def resolve_smart_dns(hostname, *_unused):
+    """
+    Resolves hostname by racing all Smart DNS providers against reference
+    resolvers.  Returns the first substituted answer, or the original
+    hostname if no provider substitutes.
+
+    This replaces the old single-provider approach.  When a provider
+    silently stops substituting a name (returns the genuine Google IP),
+    the comparison with reference resolvers detects it and the next
+    provider is tried.
     """
     norm_host = hostname.strip().lower().rstrip(".")
-    # Direct domains use system DNS
     if any(norm_host == d or norm_host.endswith("." + d) for d in DIRECT_DOMAINS):
         return hostname
 
     now = time.time()
     if norm_host in DNS_CACHE:
-        ip, expiry = DNS_CACHE[norm_host]
+        ip, _provider, expiry = DNS_CACHE[norm_host]
         if now < expiry:
             return ip
 
-    # Query Smart DNS primary & secondary
-    resolved_ip = query_dns_server(norm_host, primary)
-    if not resolved_ip and secondary:
-        resolved_ip = query_dns_server(norm_host, secondary)
+    # Step 1: Get reference answers (what the real Google IP is).
+    reference_answers = set()
+    for ref_ip in REFERENCE_RESOLVERS:
+        ans = query_dns_server(norm_host, ref_ip, timeout=2.0)
+        if ans and ans not in REFERENCE_STUBS:
+            reference_answers.add(ans)
 
-    if resolved_ip:
-        DNS_CACHE[norm_host] = (resolved_ip, now + CACHE_TTL)
-        logger.debug(f"Smart DNS resolved {hostname} -> {resolved_ip}")
-        return resolved_ip
+    # If ALL references returned stubs, we cannot validate — skip comparison.
+    if all(
+        query_dns_server(norm_host, ref_ip, timeout=2.0) in REFERENCE_STUBS
+        for ref_ip in REFERENCE_RESOLVERS
+    ):
+        reference_answers = set()
 
+    # Step 2: Query each provider; first substituted answer wins.
+    for provider in SMART_DNS_PROVIDERS:
+        answer = _query_first_answer(norm_host, provider["ips"], timeout=2.0)
+        if not answer:
+            continue
+        if _is_substituted(answer, reference_answers):
+            DNS_CACHE[norm_host] = (answer, provider["name"], now + CACHE_TTL)
+            logger.debug(
+                f"Smart DNS: {hostname} -> {answer} via {provider['name']} "
+                f"(reference: {reference_answers or 'unknown'})"
+            )
+            return answer
+        else:
+            logger.debug(
+                f"Smart DNS: {provider['name']} returned unsubstituted answer "
+                f"for {hostname} ({answer}), trying next provider"
+            )
+
+    # No provider substituted — return hostname for system DNS.
+    logger.debug(f"Smart DNS: no provider substituted {hostname}")
     return hostname
 
 async def pipe_streams(reader, writer):
@@ -129,25 +196,18 @@ async def pipe_streams(reader, writer):
             pass
 
 class SplitTunnelProxy:
-    def __init__(self, host="127.0.0.1", port=18888, smart_ip=SMART_DNS_PRIMARY):
+    def __init__(self, host="127.0.0.1", port=18888):
         self.host = host
         self.port = port
-        self.smart_ip = smart_ip
         self.server = None
 
     def _is_direct(self, hostname):
         norm = hostname.strip().lower().rstrip(".")
         return any(norm == d or norm.endswith("." + d) for d in DIRECT_DOMAINS)
 
-    def _should_mitm(self, hostname):
-        norm = hostname.strip().lower().rstrip(".")
-        if self._is_direct(norm):
-            return False
-        return any(d in norm for d in ["generativelanguage", "daily-cloudcode-pa"])
-
     async def resolve_smart(self, hostname):
-        """Resolves hostname using Smart DNS IP lookup if needed, or falls back to system DNS."""
-        return resolve_smart_dns(hostname, primary=self.smart_ip, secondary=SMART_DNS_SECONDARY)
+        """Resolves hostname using multi-provider Smart DNS with reference validation."""
+        return resolve_smart_dns(hostname)
 
     async def handle_client(self, client_reader, client_writer):
         """Handles incoming client proxy connection (HTTP CONNECT / GET / POST)."""
@@ -264,22 +324,6 @@ def run_proxy_server(host="127.0.0.1", port=18888):
     finally:
         loop.run_until_complete(proxy.stop())
         loop.close()
-
-def _should_intercept_url(url_path):
-    """Returns True if the URL path corresponds to an eligibility check endpoint."""
-    return any(p in url_path for p in ("/v1internal:loadCodeAssist", "/v1internal:checkEligibility"))
-
-def _rewrite_eligibility(data):
-    """Rewrites region ineligibility responses to ELIGIBLE."""
-    if not isinstance(data, (bytes, bytearray)):
-        return data, False
-    changed = False
-    new_data = data
-    if b"NOT_ELIGIBLE_REGION_OUT_OF_SCOPE" in new_data or b"NOT_ELIGIBLE" in new_data:
-        new_data = new_data.replace(b"NOT_ELIGIBLE_REGION_OUT_OF_SCOPE", b"ELIGIBLE")
-        new_data = new_data.replace(b"NOT_ELIGIBLE", b"ELIGIBLE")
-        changed = True
-    return new_data, changed
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s] %(message)s")

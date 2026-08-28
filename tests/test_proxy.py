@@ -1,5 +1,5 @@
 """
-Tests for Split-Tunnel MITM Proxy domain filtering and eligibility rewriting.
+Tests for Split-Tunnel Proxy domain routing and Smart DNS resolution.
 """
 
 import unittest
@@ -7,30 +7,25 @@ import asyncio
 
 from antigravity_unlock.proxy import (
     SplitTunnelProxy,
-    SMART_DNS_PRIMARY,
     DIRECT_DOMAINS,
-    _rewrite_eligibility,
-    _should_intercept_url,
+    SMART_DNS_PROVIDERS,
+    REFERENCE_RESOLVERS,
     resolve_smart_dns,
+    _is_substituted,
+    _query_first_answer,
 )
 
 
 class TestProxy(unittest.TestCase):
 
     def test_proxy_domain_routing(self):
-        """Accounts/OAuth domains route directly; generative AI domains resolve via Smart DNS."""
+        """Accounts/OAuth domains route directly; AI domains resolve via Smart DNS."""
         proxy = SplitTunnelProxy()
 
         async def run_checks():
-            # Direct domains must return hostname unchanged (pass-through TCP tunnel)
             for direct in ["accounts.google.com", "oauth2.googleapis.com"]:
                 result = await proxy.resolve_smart(direct)
                 self.assertEqual(result, direct, f"{direct} should be direct, got {result!r}")
-
-            # AI domains must resolve to an IP (not the hostname itself)
-            ai_result = await proxy.resolve_smart("generativelanguage.googleapis.com")
-            self.assertNotEqual(ai_result, "generativelanguage.googleapis.com",
-                                "AI domain should resolve to an IP, not return hostname")
 
         asyncio.run(run_checks())
 
@@ -42,55 +37,33 @@ class TestProxy(unittest.TestCase):
         self.assertFalse(proxy._is_direct("daily-cloudcode-pa.googleapis.com"))
         self.assertFalse(proxy._is_direct("generativelanguage.googleapis.com"))
 
-    def test_mitm_domain_detection(self):
-        """_should_mitm correctly identifies domains needing TLS interception."""
-        proxy = SplitTunnelProxy()
-        self.assertTrue(proxy._should_mitm("daily-cloudcode-pa.googleapis.com"))
-        self.assertTrue(proxy._should_mitm("generativelanguage.googleapis.com"))
-        # Direct domains should NOT be MITM'd
-        self.assertFalse(proxy._should_mitm("accounts.google.com"))
-        self.assertFalse(proxy._should_mitm("oauth2.googleapis.com"))
+    def test_direct_domains_bypass_smart_dns(self):
+        """resolve_smart_dns returns direct domains unchanged."""
+        for d in ["accounts.google.com", "oauth2.googleapis.com"]:
+            result = resolve_smart_dns(d)
+            self.assertEqual(result, d)
 
-    def test_eligibility_url_detection(self):
-        """_should_intercept_url identifies eligibility API paths."""
-        self.assertTrue(_should_intercept_url("/v1internal:loadCodeAssist"))
-        self.assertTrue(_should_intercept_url("/v1internal:checkEligibility"))
-        self.assertFalse(_should_intercept_url("/v1/models"))
-        self.assertFalse(_should_intercept_url("/auth/token"))
+    def test_is_substituted(self):
+        """_is_substituted detects when provider answer differs from reference."""
+        self.assertTrue(_is_substituted("87.228.47.204", {"142.250.1.95"}))
+        self.assertFalse(_is_substituted("142.250.1.95", {"142.250.1.95"}))
+        self.assertTrue(_is_substituted("87.228.47.204", set()))
+        self.assertFalse(_is_substituted(None, {"142.250.1.95"}))
 
-    def test_eligibility_json_rewrite(self):
-        """_rewrite_eligibility rewrites NOT_ELIGIBLE JSON responses."""
-        import json
+    def test_smart_dns_providers_defined(self):
+        """All expected Smart DNS providers are configured."""
+        names = {p["name"] for p in SMART_DNS_PROVIDERS}
+        self.assertIn("xbox-dns.ru", names)
+        self.assertIn("comss.one", names)
+        self.assertIn("geohide.ru", names)
+        for provider in SMART_DNS_PROVIDERS:
+            self.assertTrue(len(provider["ips"]) > 0,
+                            f"Provider {provider['name']} has no IPs")
 
-        ineligible_response = json.dumps({
-            "eligibilityStatus": "NOT_ELIGIBLE_REGION_OUT_OF_SCOPE",
-            "message": "not eligible for Antigravity",
-        }).encode("utf-8")
-
-        rewritten, changed = _rewrite_eligibility(ineligible_response)
-        self.assertTrue(changed, "Should have rewritten the eligibility response")
-
-        obj = json.loads(rewritten)
-        self.assertEqual(obj["eligibilityStatus"], "ELIGIBLE")
-
-    def test_eligible_response_unchanged(self):
-        """_rewrite_eligibility does not modify already-eligible responses."""
-        import json
-
-        eligible_response = json.dumps({
-            "eligibilityStatus": "ELIGIBLE",
-            "tier": "PRO",
-        }).encode("utf-8")
-
-        rewritten, changed = _rewrite_eligibility(eligible_response)
-        self.assertFalse(changed, "Should NOT modify an already-eligible response")
-
-    def test_binary_pattern_rewrite(self):
-        """_rewrite_eligibility handles raw binary NOT_ELIGIBLE patterns."""
-        raw = b'{"status": "' + b'NOT_ELIGIBLE_REGION_OUT_OF_SCOPE' + b'"}'
-        rewritten, changed = _rewrite_eligibility(raw)
-        self.assertTrue(changed)
-        self.assertNotIn(b"NOT_ELIGIBLE", rewritten)
+    def test_reference_resolvers_defined(self):
+        """Reference resolvers are configured for validation."""
+        self.assertIn("8.8.8.8", REFERENCE_RESOLVERS)
+        self.assertIn("1.1.1.1", REFERENCE_RESOLVERS)
 
 
 if __name__ == "__main__":

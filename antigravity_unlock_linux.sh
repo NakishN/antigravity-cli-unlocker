@@ -87,10 +87,13 @@ step_dns() {
     tmp_conf=$(mktemp /tmp/antigravity-dns-XXXXXX.conf)
     cat > "$tmp_conf" << EOF
 # Antigravity CLI Unlocker Configuration
+# Only the two hosts that Antigravity actually talks to AND that the
+# unblock resolver actually substitutes.  Everything else (accounts,
+# oauth2, www, etc.) stays on the system default resolver.
 [Resolve]
 DNS=$DNS_PRIMARY $DNS_SECONDARY
 FallbackDNS=$DNS_PRIMARY_V6 $DNS_SECONDARY_V6
-Domains=~googleapis.com ~googleusercontent.com ~google ~goog
+Domains=~daily-cloudcode-pa.googleapis.com ~generativelanguage.googleapis.com
 EOF
 
     if sudo bash -c "
@@ -119,6 +122,36 @@ EOF
     fi
 }
 
+step_ipv4_priority() {
+    info "Проверка IPv4 приоритета..."
+    if ip -6 addr show scope global 2>/dev/null | grep -q inet6; then
+        info "Глобальный IPv6 обнаружен — приоритет не меняется."
+        return 0
+    fi
+
+    local gai_conf="/etc/gai.conf"
+    local marker="# antigravity-unlocker: prefer IPv4"
+
+    if [[ -f "$gai_conf" ]] && grep -q "$marker" "$gai_conf" 2>/dev/null; then
+        ok "IPv4 приоритет уже настроен в $gai_conf"
+        return 0
+    fi
+
+    info "Глобальный IPv6 не обнаружен. Приоритизация IPv4."
+    info "Требуются права root (sudo) для записи $gai_conf"
+
+    if sudo bash -c "
+        echo '' >> '$gai_conf'
+        echo '$marker' >> '$gai_conf'
+        echo 'precedence  ::ffff:0:0/96  46' >> '$gai_conf'
+        echo 'label  ::ffff:0:0/96   2' >> '$gai_conf'
+    "; then
+        ok "IPv4 приоритет применён: $gai_conf"
+    else
+        warn "Не удалось применить IPv4 приоритет (пропустите, если IPv6 работает)."
+    fi
+}
+
 step_restore_dns() {
     local conf_file="/etc/systemd/resolved.conf.d/antigravity-unlock.conf"
     if [[ -f "$conf_file" ]]; then
@@ -127,6 +160,13 @@ step_restore_dns() {
             systemctl restart systemd-resolved 2>/dev/null || true
             resolvectl flush-caches 2>/dev/null || true
         " && ok "Правила DNS-маршрутизации удалены."
+    fi
+
+    local gai_conf="/etc/gai.conf"
+    local marker="# antigravity-unlocker: prefer IPv4"
+    if [[ -f "$gai_conf" ]] && grep -q "$marker" "$gai_conf" 2>/dev/null; then
+        sudo sed -i "/$marker/,+2d" "$gai_conf" 2>/dev/null \
+            && ok "IPv4 приоритет удалён из $gai_conf"
     fi
 }
 
@@ -178,6 +218,7 @@ main() {
     run_python_core "$@"
 
     step_dns
+    step_ipv4_priority
 
     echo ""
     echo -e "${GREEN}${BOLD}====================================================================${NC}"

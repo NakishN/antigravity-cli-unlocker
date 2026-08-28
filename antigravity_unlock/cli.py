@@ -30,6 +30,9 @@ from antigravity_unlock.pinner import (
 )
 from antigravity_unlock.guardian import run_guardian
 from antigravity_unlock.autostart import install_autostart, remove_autostart, autostart_status
+from antigravity_unlock.endpoint import apply_ide_endpoint, remove_ide_endpoint, DAILY_ENDPOINT
+from antigravity_unlock.discovery import find_ide_installations
+from antigravity_unlock.ipv4_priority import apply_ipv4_priority, remove_ipv4_priority, ipv4_preferred, has_global_ipv6
 
 STRATEGY_CHOICES = [STRATEGY_AUTO, STRATEGY_IN_PLACE, STRATEGY_PIN]
 
@@ -86,6 +89,32 @@ def status_cmd():
         print(f"  Path:      {astat['path']}")
     if astat.get('detail'):
         print(f"  Detail:    {astat['detail']}")
+
+    print("\n IPv4 Priority:")
+    print(f"  Global IPv6:    {'Yes' if has_global_ipv6() else 'No'}")
+    print(f"  IPv4 preferred: {'Yes' if ipv4_preferred() else 'No'}")
+
+    print("\n CloudCode Endpoint Override:")
+    print(f"  Target:    {DAILY_ENDPOINT}")
+    from antigravity_unlock.endpoint import _ide_settings_path, IDE_SETTING
+    import re as _re
+    ide_installs = find_ide_installations()
+    for ide_dir in ide_installs:
+        sp = _ide_settings_path(ide_dir)
+        if sp and os.path.isfile(sp):
+            with open(sp, "r", encoding="utf-8", errors="ignore") as _f:
+                _txt = _f.read()
+            _m = _re.search(r'"' + _re.escape(IDE_SETTING) + r'"\s*:\s*"([^"]*)"', _txt)
+            current = _m.group(1) if _m else "not set"
+            status = "OK" if current == DAILY_ENDPOINT else f"needs update ({current})"
+        else:
+            status = "settings file not found"
+            sp = sp or "(unknown)"
+        print(f"  IDE ({ide_dir}):")
+        print(f"    Settings: {sp}")
+        print(f"    Status:   {status}")
+    if not ide_installs:
+        print("  No IDE installations found.")
     print("")
 
 
@@ -162,6 +191,20 @@ def main():
     auto_sub.add_parser("uninstall", help="Remove guardian service from autostart")
     auto_sub.add_parser("status", help="Show autostart service status")
 
+    # Command: ipv4
+    ipv4_parser = subparsers.add_parser("ipv4", help="Manage IPv4 priority over IPv6")
+    ipv4_sub = ipv4_parser.add_subparsers(dest="ipv4_subcommand", help="IPv4 actions")
+    ipv4_sub.add_parser("apply", help="Prefer IPv4 when no global IPv6 is available")
+    ipv4_sub.add_parser("remove", help="Remove IPv4 priority override")
+    ipv4_sub.add_parser("status", help="Show current IPv4 priority status")
+
+    # Command: endpoint
+    endpoint_parser = subparsers.add_parser("endpoint", help="Manage CloudCode endpoint override for IDE")
+    ep_sub = endpoint_parser.add_subparsers(dest="endpoint_subcommand", help="Endpoint actions")
+    ep_sub.add_parser("apply", help=f"Set IDE endpoint to {DAILY_ENDPOINT}")
+    ep_sub.add_parser("remove", help="Remove IDE endpoint override")
+    ep_sub.add_parser("status", help="Show current endpoint status")
+
     # Legacy & convenience flags
     parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
@@ -216,6 +259,10 @@ def main():
             sys.exit(1)
         success, msg, _ = patch_binary(agy_path, dry_run=getattr(args, "dry_run", False), force=getattr(args, "force", False))
         print(f"Result: {msg}")
+        for ide_dir in find_ide_installations():
+            ok, ep_msg = apply_ide_endpoint(ide_dir)
+            if ep_msg:
+                print(f"Endpoint ({ide_dir}): {ep_msg}")
         sys.exit(0 if success else 1)
 
     elif args.command == "restore":
@@ -270,6 +317,46 @@ def main():
         strategy = getattr(args, "strategy", None)
         sys.exit(run_guardian(strategy=strategy))
 
+    elif args.command == "ipv4":
+        sub = getattr(args, "ipv4_subcommand", None) or "status"
+        print_banner()
+        if sub == "apply":
+            ok, msg = apply_ipv4_priority()
+            print(f"  {msg}")
+            sys.exit(0 if ok else 1)
+        elif sub == "remove":
+            ok, msg = remove_ipv4_priority()
+            print(f"  {msg}")
+            sys.exit(0 if ok else 1)
+        else:
+            print(f"  Global IPv6:   {'Yes' if has_global_ipv6() else 'No'}")
+            print(f"  IPv4 preferred: {'Yes' if ipv4_preferred() else 'No'}")
+            sys.exit(0)
+
+    elif args.command == "endpoint":
+        sub = getattr(args, "endpoint_subcommand", None) or "status"
+        print_banner()
+        if sub == "apply":
+            found = False
+            for ide_dir in find_ide_installations():
+                found = True
+                ok, msg = apply_ide_endpoint(ide_dir)
+                print(f"  {ide_dir}: {msg}")
+            if not found:
+                print("  No IDE installations found.")
+            sys.exit(0)
+        elif sub == "remove":
+            found = False
+            for ide_dir in find_ide_installations():
+                found = True
+                ok, msg = remove_ide_endpoint(ide_dir)
+                print(f"  {ide_dir}: {msg}")
+            if not found:
+                print("  No IDE installations found.")
+            sys.exit(0)
+        else:
+            status_cmd()
+
     elif args.command == "autostart":
         sub = getattr(args, "autostart_subcommand", None) or "status"
         if sub == "install":
@@ -297,6 +384,10 @@ def main():
             print(f"Enforcing active strategy '{active_strat}'...")
             ok, msg, _ = enforce_strategy(strategy=active_strat)
             print(f"Result: {msg}")
+            for ide_dir in find_ide_installations():
+                ok, ep_msg = apply_ide_endpoint(ide_dir)
+                if ep_msg:
+                    print(f"Endpoint ({ide_dir}): {ep_msg}")
             print("\nUsage tips:")
             print("  antigravity-unlock --strategy auto     (Auto: in-place with 1.1.9 fallback)")
             print("  antigravity-unlock --strategy in_place (Patch installed agy in-place)")
