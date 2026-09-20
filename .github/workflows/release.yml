@@ -79,12 +79,33 @@ jobs:
         with:
           path: dist_all
 
+      # The CHANGELOG is the source of truth for release notes, so the release
+      # body is the matching section rather than a hand-copied duplicate that
+      # drifts.  `awk` cuts from the `## [<tag-without-v>]` heading up to the
+      # next `## [` heading; if the section is missing the file stays empty and
+      # the release is still created, just without notes.
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 == "## [" ver "]" || index($0, "## [" ver "] - ") == 1 { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "::warning::No CHANGELOG section found for [$VERSION]; releasing without notes"
+            echo "Release $VERSION." > RELEASE_NOTES.md
+          else
+            echo "Extracted $(wc -l < RELEASE_NOTES.md) lines of notes for [$VERSION]"
+          fi
+
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist_all/*/*
+          body_path: RELEASE_NOTES.md
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
