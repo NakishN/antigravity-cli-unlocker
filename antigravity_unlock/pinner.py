@@ -22,11 +22,15 @@ from antigravity_unlock.config import (
 from antigravity_unlock.discovery import get_primary_agy
 from antigravity_unlock.logging_utils import get_logger
 from antigravity_unlock.patcher import (
+    OUTCOME_FAILED,
+    OUTCOME_SIGNATURE_MISSING,
+    STATE_PATCHED,
+    classify_binary,
     compute_sha256,
     get_app_dir,
     get_backup_path,
-    load_versions_db,
     patch_binary,
+    repatch_if_needed,
 )
 
 logger = get_logger()
@@ -88,44 +92,19 @@ def _is_patched_binary(agy_path):
     Checks whether the binary is confirmed to have patch signatures applied.
     Returns True only if the primary cross-platform patch (protobuf rename)
     is applied.  Platform-specific machine code patches are not required.
+
+    Delegates to ``patcher.classify_binary``, which streams the file instead of
+    reading ~220 MB into memory on every guardian poll.  A binary we do not
+    recognise (``STATE_FOREIGN``) is reported as *not* patched, but callers must
+    not treat that as licence to overwrite it - see ``enforce_strategy``.
     """
-    vdb = load_versions_db()
+    if not agy_path or not os.path.isfile(agy_path):
+        return False
     try:
-        with open(agy_path, "rb") as f:
-            data = f.read()
+        state, _ = classify_binary(agy_path)
     except OSError:
         return False
-
-    # Check primary patterns first (cross-platform protobuf rename).
-    # If the primary replacement is present and the primary original
-    # is absent, the binary is considered patched regardless of
-    # platform-specific patterns.
-    for wp in vdb.get("wildcard_patterns", []):
-        if not wp.get("primary"):
-            continue
-        orig_bytes = bytes.fromhex(wp["pattern"])
-        repl_bytes = bytes.fromhex(wp["replacement"])
-        if repl_bytes in data and orig_bytes not in data:
-            return True
-
-    # Fallback: if no primary pattern is defined, check all patterns.
-    has_primary = any(wp.get("primary") for wp in vdb.get("wildcard_patterns", []))
-    if has_primary:
-        return False
-
-    has_unpatched = False
-    has_patched = False
-    for wp in vdb.get("wildcard_patterns", []):
-        orig_bytes = bytes.fromhex(wp["pattern"])
-        repl_bytes = bytes.fromhex(wp["replacement"])
-        if orig_bytes in data:
-            has_unpatched = True
-        if repl_bytes in data:
-            has_patched = True
-
-    if has_unpatched:
-        return False
-    return has_patched
+    return state == STATE_PATCHED
 
 
 def download_pinned_backup(agy_path=None, target_version=DEFAULT_PINNED_VERSION):
@@ -287,14 +266,21 @@ def ensure_pinned(agy_path=None, dry_run=False):
     return True, f"Restored agy ({reason}) without patching", True
 
 
-def enforce_strategy(agy_path=None, strategy=None, dry_run=False):
+def enforce_strategy(agy_path=None, strategy=None, dry_run=False, include_optional=False):
     """
     Enforces the requested (or configured) patch strategy on the target agy binary.
 
     Strategies:
-    - 'auto': Attempts in-place patching on installed binary; falls back to pinned 1.1.9 backup if unsupported.
-    - 'in_place': Strictly patches current installed binary on the spot.
-    - 'pin': Strictly restores and pins to the configured backup version (1.1.9).
+    - 'in_place' (default): patch whatever agy version is installed, in place.
+    - 'auto': same as in_place, but may fall back to a pinned older build.
+    - 'pin': strictly restores and pins to the configured backup version.
+
+    ``auto`` only downgrades to the pinned build when ``allow_pin_fallback`` is
+    set in the config.  Silent downgrade used to be the default and it is a bad
+    one: agy self-updates, so an unrecognised new build would be replaced by a
+    months-old pinned binary, trading a patch this tool cannot yet apply for an
+    outright broken install.  Leaving the new build alone keeps agy working
+    (with its own error visible) and gives the user the cue to update the tool.
     """
     agy_path = agy_path or get_primary_agy()
     if not agy_path:
@@ -304,6 +290,13 @@ def enforce_strategy(agy_path=None, strategy=None, dry_run=False):
     active_strategy = strategy or config.get("strategy", DEFAULT_STRATEGY)
 
     if active_strategy == STRATEGY_PIN:
+        installed = get_agy_version(agy_path)
+        pinned = config.get("pinned_version", DEFAULT_PINNED_VERSION)
+        if installed and pinned and installed != pinned:
+            logger.warning(
+                "Pin strategy will replace installed agy %s with pinned %s",
+                installed, pinned,
+            )
         return ensure_pinned(agy_path=agy_path, dry_run=dry_run)
 
     ver = get_agy_version(agy_path) or "unknown"
@@ -316,25 +309,47 @@ def enforce_strategy(agy_path=None, strategy=None, dry_run=False):
     if active_strategy == STRATEGY_IN_PLACE:
         if dry_run:
             return True, f"[DRY-RUN] Would patch agy ({ver}) in-place", False
-        success, patch_msg, _ = patch_binary(agy_path)
-        if not success or not _is_patched_binary(agy_path):
+        outcome, patch_msg = repatch_if_needed(
+            agy_path, include_optional=include_optional
+        )
+        if outcome == OUTCOME_FAILED:
+            return False, f"Failed to patch agy ({ver}) in-place: {patch_msg}", False
+        if outcome == OUTCOME_SIGNATURE_MISSING:
+            return False, (
+                f"agy {ver}: {patch_msg}. Update antigravity-cli-unlocker to add "
+                f"support for this build; the binary was left untouched."
+            ), False
+        if not _is_patched_binary(agy_path):
             return False, f"Failed to patch agy ({ver}) in-place: {patch_msg}", False
         msg = f"Patched agy ({ver}) in-place: {patch_msg}"
         logger.info(msg)
         return True, msg, True
 
-    # Auto strategy: Try in-place, fallback to pinned version if signatures missing
+    # Auto strategy: patch in place; only downgrade to a pinned build on an
+    # explicit opt-in.
     if dry_run:
         target_v = config.get("pinned_version", DEFAULT_PINNED_VERSION)
         return True, f"[DRY-RUN] Auto mode: would attempt in-place patch, fallback to pin {target_v}", False
 
-    success, patch_msg, _ = patch_binary(agy_path)
+    success, patch_msg, _ = patch_binary(agy_path, include_optional=include_optional)
     if success and _is_patched_binary(agy_path):
         msg = f"Auto mode: Patched agy ({ver}) in-place: {patch_msg}"
         logger.info(msg)
         return True, msg, True
 
-    # In-place failed or unsupported on unknown binary, fallback to pinned backup
+    if not config.get("allow_pin_fallback", False):
+        logger.warning(
+            "Auto mode: in-place patch did not succeed on agy %s (%s). "
+            "Leaving the installed binary alone - set allow_pin_fallback=true "
+            "to permit downgrading to pinned %s.",
+            ver, patch_msg, config.get("pinned_version", DEFAULT_PINNED_VERSION),
+        )
+        return False, (
+            f"Auto mode: could not patch agy {ver} ({patch_msg}). Installed binary "
+            f"left untouched. Run 'antigravity-unlock doctor' for a layered report."
+        ), False
+
     target_v = config.get("pinned_version", DEFAULT_PINNED_VERSION)
     logger.warning("Auto mode: in-place patch unsupported on %s (%s). Falling back to pin %s", ver, patch_msg, target_v)
     return ensure_pinned(agy_path=agy_path, dry_run=dry_run)
+

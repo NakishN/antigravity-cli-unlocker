@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "antigravity-cli-unlocker"
-version = "1.4.0"
-description = "Cross-Platform Split-Tunnel Proxy, Multi-Strategy Patcher & Autostart Guardian for Google Antigravity CLI (agy)"
+version = "1.5.0"
+description = "Cross-Platform Patcher, Doctor & Autostart Guardian for Google Antigravity CLI (agy)"
 readme = "README.md"
 authors = [{ name = "NakishN" }]
 license = { text = "MIT" }
 requires-python = ">=3.8"
-dependencies = [
-    "cryptography>=3.4",
-]
+# No runtime dependencies: the MITM proxy and its CA generation were removed in
+# 1.5.0, which is what pulled in `cryptography`.
+dependencies = []
 
 [project.optional-dependencies]
 watchdog = ["watchdog>=2.1.0"]

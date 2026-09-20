@@ -122,17 +122,36 @@ class TestPinner(unittest.TestCase):
         self.assertIn(b"1.1.17", content)
         self.assertIn(b"eligibility check bypass", content)
 
-        # 2. Unknown binary without patch signatures falls back to 1.1.9 pinned backup
+        # 2. Unknown build: auto mode must NOT silently downgrade to the pinned
+        #    binary.  agy self-updates, so replacing a new build with a stale
+        #    pinned one turns "we cannot patch this yet" into "your agy is
+        #    broken" - strictly worse than leaving the new build alone.
         with open(self.agy_path, "wb") as f:
             f.write(self.dummy_binary_content)
         init_pin(agy_path=self.agy_path, pinned_version="1.1.9", source_path=self.agy_path)
 
+        unknown = b"#!/bin/sh\necho agy version 2.0.0 completely different binary without signatures\n"
         with open(self.agy_path, "wb") as f:
-            f.write(b"#!/bin/sh\necho agy version 2.0.0 completely different binary without signatures\n")
+            f.write(unknown)
 
         ok_fb, msg_fb, changed_fb = enforce_strategy(agy_path=self.agy_path, strategy=STRATEGY_AUTO)
-        self.assertTrue(ok_fb)
-        self.assertTrue(changed_fb)
+        self.assertFalse(ok_fb)
+        self.assertFalse(changed_fb)
+        with open(self.agy_path, "rb") as f:
+            self.assertEqual(
+                f.read(), unknown,
+                "auto mode must leave an unrecognised build byte-for-byte untouched",
+            )
+        self.assertIn("left untouched", msg_fb)
+
+        # 3. The pinned downgrade is still available, but only on explicit opt-in.
+        cfg = load_config()
+        cfg["allow_pin_fallback"] = True
+        save_config(cfg)
+
+        ok_pin, msg_pin, changed_pin = enforce_strategy(agy_path=self.agy_path, strategy=STRATEGY_AUTO)
+        self.assertTrue(ok_pin)
+        self.assertTrue(changed_pin)
         with open(self.agy_path, "rb") as f:
             restored = f.read()
         self.assertIn(b"1.1.9", restored)

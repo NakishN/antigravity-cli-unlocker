@@ -31,6 +31,28 @@
         "protobuf_name_ineligible"
       ]
     },
+    "1.1.22": {
+      "description": "Antigravity CLI 1.1.22 - verified end-to-end. All 9 wildcard patterns (machine code gates + string literals) apply cleanly. EligibilityError and IneligibilityFromResult gates match 1x each.",
+      "wildcard_patterns": [
+        "eligibility_error_gate",
+        "ineligibility_from_result_gate",
+        "eligibility_check_failed_cap",
+        "not_eligible_region_out_of_scope",
+        "not_eligible_application_out_of_scope",
+        "protobuf_name_ineligible"
+      ]
+    },
+    "1.1.27": {
+      "description": "Antigravity CLI 1.1.27 - verified end-to-end. Machine-code eligibility gates (backend.(*AuthStatus).EligibilityError, backend.IneligibilityFromResult) remain byte-identical, size-preserving wildcard code patches apply unchanged (eligibility_error_gate 1x, ineligibility_from_result_gate 1x; string patterns also match). Verified by running patched binary: `agy --version` returns 1.1.27 cleanly. Documentation-only entry: no top-level sha256 so patch_binary keeps using wildcard patterns. sha256(original)=93eb2118b778a4005700b54cdd7e08b896fbe665d5ff338e38e9e53da9a091ea, sha256(patched)=04cac93b64e788d5acf0767139624057623393ef95113db9484a57e76e7eee0a",
+      "wildcard_patterns": [
+        "eligibility_error_gate",
+        "ineligibility_from_result_gate",
+        "eligibility_check_failed_cap",
+        "not_eligible_region_out_of_scope",
+        "not_eligible_application_out_of_scope",
+        "protobuf_name_ineligible"
+      ]
+    },
     "1.0.0-sample": {
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "patches": [
@@ -44,17 +66,25 @@
   },
   "wildcard_patterns": [
     {
+      "name": "protobuf_ineligible_bare",
+      "pattern": "696e656c696769626c65",
+      "replacement": "696e6578696769626c65",
+      "primary": true,
+      "description": "PRIMARY (cross-platform, version-agnostic): renames every bare 'ineligible' literal to same-length 'inexigible'. This subsumes protobuf_name_ineligible and account_ineligible, and additionally rewrites the serialized protobuf descriptor occurrences so descriptor and Go struct tags stay consistent. Because the rename is case-sensitive, Go type/field identifiers (IneligibleTier, IneligibleInfo) are untouched - only the wire/JSON field names change, so protojson no longer binds the server's 'ineligible' key and the eligibility gate sees an unset field. agy 1.2.7: 9 occurrences."
+    },
+    {
       "name": "protobuf_name_ineligible",
       "pattern": "6e616d653d696e656c696769626c65",
       "replacement": "6e616d653d696e6578696769626c65",
-      "primary": true,
-      "description": "PRIMARY (cross-platform): Renames protobuf field descriptor name=ineligible to name=inexigible (same length). The client no longer sees the field it gates on. Works on all platforms because it targets a string literal, not machine code."
+      "description": "SUPERSEDED by protobuf_ineligible_bare (kept for older builds): PRIMARY (cross-platform): Renames protobuf field descriptor name=ineligible to name=inexigible (same length). The client no longer sees the field it gates on. Works on all platforms because it targets a string literal, not machine code.",
+      "best_effort": true
     },
     {
       "name": "account_ineligible",
       "pattern": "4163636f756e7420696e656c696769626c65",
       "replacement": "4163636f756e7420696e6578696769626c65",
-      "description": "Cross-platform: Renames 'Account ineligible' string to 'Account inexigible' (same length)."
+      "description": "SUPERSEDED by protobuf_ineligible_bare (kept for older builds): Cross-platform: Renames 'Account ineligible' string to 'Account inexigible' (same length).",
+      "best_effort": true
     },
     {
       "name": "eligibility_check_failed",
@@ -90,15 +120,28 @@
       "name": "eligibility_error_gate",
       "pattern": "493b66100f86ce000000554889e54883ec484885c00f84b3",
       "replacement": "31c031dbc386ce000000554889e54883ec484885c00f84b3",
-      "platform": ["linux_x86_64"],
-      "description": "MACHINE CODE (linux_x86_64 only): backend.(*AuthStatus).EligibilityError -> xor eax,eax; xor ebx,ebx; ret. Platform-specific Go binary patch, defense-in-depth alongside the protobuf rename."
+      "platform": [
+        "linux_x86_64"
+      ],
+      "description": "OPT-IN (off by default, --include-optional): machine-code gate, byte-exact per build. On agy 1.2.7 ineligibility_from_result_gate still matches but its companion eligibility_error_gate does NOT - the pair is broken, and rewriting a relative jump whose offset was derived from a different build risks landing mid-instruction in a 224 MB binary. The bare-literal rename alone is the proven fix, so these stay off unless a specific build has been verified end-to-end. MACHINE CODE (linux_x86_64 only): backend.(*AuthStatus).EligibilityError -> xor eax,eax; xor ebx,ebx; ret. Platform-specific Go binary patch, defense-in-depth alongside the protobuf rename.",
+      "optional": true
     },
     {
       "name": "ineligibility_from_result_gate",
       "pattern": "4885c00f84af000000807808000f85a5",
       "replacement": "e9b3000000af000000807808000f85a5",
-      "platform": ["linux_x86_64"],
-      "description": "MACHINE CODE (linux_x86_64 only): backend.IneligibilityFromResult -> jmp to eligible epilogue. Platform-specific Go binary patch, defense-in-depth."
+      "platform": [
+        "linux_x86_64"
+      ],
+      "description": "OPT-IN (off by default, --include-optional): machine-code gate, byte-exact per build. On agy 1.2.7 ineligibility_from_result_gate still matches but its companion eligibility_error_gate does NOT - the pair is broken, and rewriting a relative jump whose offset was derived from a different build risks landing mid-instruction in a 224 MB binary. The bare-literal rename alone is the proven fix, so these stay off unless a specific build has been verified end-to-end. MACHINE CODE (linux_x86_64 only): backend.IneligibilityFromResult -> jmp to eligible epilogue. Platform-specific Go binary patch, defense-in-depth.",
+      "optional": true
+    },
+    {
+      "name": "proxy_var_isolation",
+      "pattern": "68747470735f70726f7879",
+      "replacement": "41475f4c535f50524f5859",
+      "optional": true,
+      "description": "OPT-IN (off by default, --include-optional): renames the lower-case 'https_proxy' env literal to same-length 'AG_LS_PROXY' so agy reads its proxy from a private variable instead of the ambient one. Deliberately leaves HTTPS_PROXY intact. Only enable when this tool supplies the proxy; otherwise it silently stops agy from honouring the user's own https_proxy."
     }
   ]
 }

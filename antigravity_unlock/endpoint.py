@@ -1,16 +1,24 @@
 """
 CloudCode endpoint override for Antigravity IDE and CLI.
 
-The region gate lives on the CloudCode API.  ``cloudcode-pa.googleapis.com`` is
-no longer substituted by any unblock DNS provider, while
-``daily-cloudcode-pa.googleapis.com`` is the *same service* and is still
-substituted.  The fix is to point every client surface at the daily host.
+``cloudcode-pa.googleapis.com`` and ``daily-cloudcode-pa.googleapis.com`` are the
+same service; both were verified reachable on 2026-09-20 and both return the same
+401 ``CREDENTIALS_MISSING`` for an unauthenticated probe.  Nothing about the
+unlock depends on choosing between them - the eligibility gate is a client-side
+check over a server-supplied protobuf field, and the binary patch is what removes
+it.
+
+The override therefore exists as an escape hatch, not as a fix, and is applied
+only when explicitly requested via ``antigravity-unlock endpoint apply``.  It used
+to be written automatically on every patch, on the theory that unblock DNS
+providers substituted the ``daily-`` host but not the production one.  That theory
+died with the Smart-DNS layer in 1.5.0, and silently editing a user's
+``settings.json`` for no measured benefit is not a trade worth making.
 
 Each surface already has a supported configuration knob:
 
-- **CLI** reads ``CLOUD_CODE_URL`` (handled in ``runner.py``).
+- **CLI** reads ``CLOUD_CODE_URL``.
 - **IDE** reads ``jetski.cloudCodeUrl`` from its user settings JSON.
-- **Desktop** already ships pointing at the daily host in ``app.asar``.
 
 Being configuration rather than a binary patch means an app update cannot
 silently undo it, and a revert is a key removal rather than a byte-level

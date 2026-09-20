@@ -33,7 +33,6 @@ def build():
         "--onefile",
         "--name", bin_name,
         "--add-data", add_data,
-        "--collect-all", "cryptography",
         "--clean",
         entrypoint
     ]

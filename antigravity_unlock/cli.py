@@ -8,10 +8,14 @@ import argparse
 
 from antigravity_unlock import __version__
 from antigravity_unlock.discovery import find_agy_binaries, get_primary_agy
-from antigravity_unlock.patcher import patch_binary, restore_binary, compute_sha256, get_backup_path
-from antigravity_unlock.proxy import run_proxy_server
+from antigravity_unlock.patcher import (
+    classify_binary,
+    compute_sha256,
+    get_backup_path,
+    patch_binary,
+    restore_binary,
+)
 from antigravity_unlock.runner import run_wrapped_command
-from antigravity_unlock.ca_manager import get_or_create_ca, install_ca_system
 from antigravity_unlock.config import (
     DEFAULT_PINNED_VERSION,
     DEFAULT_STRATEGY,
@@ -19,6 +23,7 @@ from antigravity_unlock.config import (
     STRATEGY_IN_PLACE,
     STRATEGY_PIN,
     load_config,
+    migrate_config,
 )
 from antigravity_unlock.pinner import (
     enforce_strategy,
@@ -41,7 +46,7 @@ def print_banner():
     print(f"""
 ╔══════════════════════════════════════════════════════╗
 ║     Antigravity CLI Unlocker v{__version__:<22} ║
-║   Cross-Platform Split-Tunnel Proxy & Patcher        ║
+║   Cross-Platform Patcher, Doctor & Guardian          ║
 ╚══════════════════════════════════════════════════════╝
 """)
 
@@ -69,16 +74,30 @@ def status_cmd():
     pinned_bak = get_pinned_backup_path(primary) if primary else None
     strat = cfg.get("strategy", DEFAULT_STRATEGY)
     if strat == STRATEGY_AUTO:
-        strat_desc = "Auto: In-place with fallback to pinned version"
+        fallback = "enabled" if cfg.get("allow_pin_fallback") else "disabled"
+        strat_desc = f"Auto: In-place, pinned downgrade {fallback}"
     elif strat == STRATEGY_IN_PLACE:
         strat_desc = "In-place: Patch installed binary on the spot"
     else:
         strat_desc = "Pin: Enforce rollback and lock to pinned version"
 
     print(f"  Active Strategy: {strat} ({strat_desc})")
-    print(f"  Fallback Version:{cfg.get('pinned_version', DEFAULT_PINNED_VERSION)}")
+    print(f"  Pinned Version:  {cfg.get('pinned_version', DEFAULT_PINNED_VERSION)}")
     print(f"  Auto-Patch:      {cfg.get('auto_patch', True)}")
+    print(f"  Optional Patches:{'on' if cfg.get('include_optional') else 'off'}")
     print(f"  Pinned Backup:   {'Present (' + pinned_bak + ')' if pinned_bak and os.path.exists(pinned_bak) else 'Not initialized'}")
+
+    if primary and os.path.isfile(primary):
+        state, detail = classify_binary(primary)
+        label = {
+            "patched": "PATCHED",
+            "unpatched": "UNPATCHED",
+            "foreign": "NOT RECOGNISED",
+        }.get(state, state.upper())
+        print("\n Patch State:")
+        print(f"  {label}: {detail}")
+        if state == "foreign":
+            print("  -> run 'antigravity-unlock doctor' for a layered report")
 
     print("\n Autostart Status:")
     astat = autostart_status()
@@ -126,13 +145,15 @@ def main():
         "--strategy",
         choices=STRATEGY_CHOICES,
         default=None,
-        help="Patch strategy: 'auto' (default: in-place with 1.1.9 fallback), 'in_place' (patch current), 'pin' (lock 1.1.9)",
+        help="Patch strategy: 'in_place' (default: patch the installed agy), "
+             "'auto' (in-place, optional downgrade to a pinned build), "
+             "'pin' (lock to the pinned version)",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
     # Command: run
-    run_parser = subparsers.add_parser("run", help="Run agy wrapped with local split-tunnel proxy")
+    run_parser = subparsers.add_parser("run", help="Patch agy if needed, then run it")
     run_parser.add_argument(
         "--strategy",
         choices=STRATEGY_CHOICES,
@@ -145,17 +166,25 @@ def main():
     patch_parser = subparsers.add_parser("patch", help="Apply patch to agy binary in-place")
     patch_parser.add_argument("--dry-run", action="store_true", help="Verification mode without writing changes")
     patch_parser.add_argument("--force", action="store_true", help="Force patch attempt")
+    patch_parser.add_argument(
+        "--include-optional",
+        action="store_true",
+        help="Also apply opt-in patterns (build-specific machine-code gates, https_proxy rename)",
+    )
+
+    # Command: doctor
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Layered diagnosis: binary, config, hosts pin, egress, endpoint, live agy run"
+    )
+    doctor_parser.add_argument("--no-network", action="store_true", help="Skip egress and endpoint probes")
+    doctor_parser.add_argument(
+        "--no-functional", action="store_true",
+        help="Skip the live 'agy -p' run (it costs one model call)",
+    )
+    doctor_parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     # Command: restore
     subparsers.add_parser("restore", help="Restore original agy binary from backup")
-
-    # Command: proxy
-    proxy_parser = subparsers.add_parser("proxy", help="Run standalone Split-Tunnel proxy server")
-    proxy_parser.add_argument("--host", default="127.0.0.1", help="Proxy host (default: 127.0.0.1)")
-    proxy_parser.add_argument("--port", type=int, default=18888, help="Proxy port (default: 18888)")
-
-    # Command: install-ca
-    subparsers.add_parser("install-ca", help="Install local MITM CA certificate into system trust store")
 
     # Command: status
     subparsers.add_parser("status", help="Show system agy binaries, patch, pin, and autostart status")
@@ -205,12 +234,14 @@ def main():
     ep_sub.add_parser("remove", help="Remove IDE endpoint override")
     ep_sub.add_parser("status", help="Show current endpoint status")
 
-    # Command: setup (hosts pinning for SNI proxy)
-    setup_parser = subparsers.add_parser("setup", help="System-wide setup (hosts pinning, requires sudo)")
+    # Command: setup (legacy hosts-pin cleanup only - pinning was removed in 1.5.0)
+    setup_parser = subparsers.add_parser(
+        "setup", help="Remove /etc/hosts pins left behind by versions <=1.4.x (requires sudo)"
+    )
     setup_sub = setup_parser.add_subparsers(dest="setup_subcommand", help="Setup actions")
-    setup_sub.add_parser("apply", help="Add SNI proxy entries to /etc/hosts (requires root)")
-    setup_sub.add_parser("remove", help="Remove SNI proxy entries from /etc/hosts (requires root)")
-    setup_sub.add_parser("status", help="Show hosts pinning status")
+    setup_sub.add_parser("apply", help="Removed in 1.5.0 - explains why and what to run instead")
+    setup_sub.add_parser("remove", help="Delete leftover pin lines from /etc/hosts (requires root)")
+    setup_sub.add_parser("status", help="Show leftover pin lines in /etc/hosts")
 
     # Legacy & convenience flags
     parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
@@ -226,6 +257,21 @@ def main():
     parser.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
 
     args, unknown = parser.parse_known_args()
+
+    # Bring a pre-1.5 config forward before anything reads it.  Most importantly
+    # this clears a `strategy: pin` that predates an agy self-update: left alone,
+    # the next guardian tick would replace a newer working agy with the stale
+    # pinned build.
+    try:
+        _primary = get_primary_agy()
+        _installed = get_agy_version(_primary) if _primary else None
+        _changed, _cfg, _notes = migrate_config(installed_version=_installed)
+        if _changed and _notes and not getattr(args, "json", False):
+            for _n in _notes:
+                if "strategy" in _n:
+                    print(f"[config] {_n}")
+    except Exception:
+        pass
 
     # Dispatch legacy flags
     if args.restore:
@@ -264,13 +310,43 @@ def main():
         if not agy_path:
             print("Error: agy binary not found.", file=sys.stderr)
             sys.exit(1)
-        success, msg, _ = patch_binary(agy_path, dry_run=getattr(args, "dry_run", False), force=getattr(args, "force", False))
+        include_optional = getattr(args, "include_optional", False) or load_config().get("include_optional", False)
+        success, msg, _ = patch_binary(
+            agy_path,
+            dry_run=getattr(args, "dry_run", False),
+            force=getattr(args, "force", False),
+            include_optional=include_optional,
+        )
         print(f"Result: {msg}")
-        for ide_dir in find_ide_installations():
-            ok, ep_msg = apply_ide_endpoint(ide_dir)
-            if ep_msg:
-                print(f"Endpoint ({ide_dir}): {ep_msg}")
+        state, detail = classify_binary(agy_path)
+        print(f"State:  {state} ({detail})")
+        if state == "foreign":
+            print(
+                "\nThis agy build is not recognised. It was left unmodified so that it can\n"
+                "report its own error, rather than being handed back looking patched.\n"
+                "Update antigravity-cli-unlocker, or add a signature for this build.",
+                file=sys.stderr,
+            )
         sys.exit(0 if success else 1)
+
+    elif args.command == "doctor":
+        import json as _json
+
+        from antigravity_unlock.doctor import format_report, run_doctor
+
+        overall, layers, meta = run_doctor(
+            skip_network=getattr(args, "no_network", False),
+            skip_functional=getattr(args, "no_functional", False),
+        )
+        if getattr(args, "json", False):
+            print(_json.dumps(
+                {"overall": overall, "checks": layers, "meta": meta},
+                indent=2, default=str,
+            ))
+        else:
+            print_banner()
+            print(format_report(overall, layers, meta))
+        sys.exit(0 if overall != "fail" else 1)
 
     elif args.command == "restore":
         print_banner()
@@ -280,20 +356,6 @@ def main():
             sys.exit(1)
         success, msg = restore_binary(agy_path)
         print(f"Result: {msg}")
-        sys.exit(0 if success else 1)
-
-    elif args.command == "proxy":
-        print_banner()
-        print(f"Starting Split-Tunnel Proxy on http://{args.host}:{args.port}...")
-        run_proxy_server(host=args.host, port=args.port)
-
-    elif args.command == "install-ca":
-        print_banner()
-        _, _, ca_cert_path = get_or_create_ca()
-        print(f" CA certificate: {ca_cert_path}")
-        print(" Installing into system trust store...")
-        success, msg = install_ca_system(ca_cert_path)
-        print(f" {'Success' if success else 'Failed'}: {msg}")
         sys.exit(0 if success else 1)
 
     elif args.command == "status":
@@ -380,43 +442,48 @@ def main():
             status_cmd()
 
     elif args.command == "setup":
-        from antigravity_unlock.hosts_manager import pin, unpin, is_pinned
+        from antigravity_unlock.hosts_cleanup import find_pins, unpin
+
         sub = getattr(args, "setup_subcommand", None) or "status"
         print_banner()
         if sub == "apply":
-            try:
-                pin()
-                print("  ✅ SNI proxy entries added to /etc/hosts")
-                print("  Domains pinned:")
-                for ip, domains in __import__('antigravity_unlock.hosts_manager', fromlist=['PROXY_IPS']).PROXY_IPS.items():
-                    for d in domains:
-                        print(f"    {d} -> {ip}")
-                print("\n  ⚠️  Re-authenticate agy after setup:")
-                print("    GODEBUG=http2client=0 agy logout")
-                print("    GODEBUG=http2client=0 antigravity-unlock run -- -p 'say hello'")
-            except PermissionError as e:
-                print(f"  ❌ {e}", file=sys.stderr)
-                sys.exit(1)
-            except Exception as e:
-                print(f"  ❌ Error: {e}", file=sys.stderr)
-                sys.exit(1)
+            print(
+                "  REFUSED: hosts pinning was removed in 1.5.0.\n"
+                "\n"
+                "  Pinning CloudCode to a third-party SNI proxy was never what unlocked\n"
+                "  Antigravity - the eligibility gate is a client-side check over a\n"
+                "  server-supplied protobuf field, and renaming that field is sufficient\n"
+                "  (verified on agy 1.2.7 from a blocked-region IP with no proxy at all).\n"
+                "  A pin only overrides whatever egress route you already have, and the\n"
+                "  front end this used to point at no longer completes a TLS handshake.\n"
+                "\n"
+                "  To unlock:      antigravity-unlock patch\n"
+                "  To diagnose:    antigravity-unlock doctor\n"
+                "  To clean up an old pin:  sudo antigravity-unlock setup remove"
+            )
+            sys.exit(1)
         elif sub == "remove":
             try:
-                unpin()
-                print("  ✅ SNI proxy entries removed from /etc/hosts")
+                removed, msg = unpin()
+                print(f"  {'OK' if removed else 'NOOP'}: {msg}")
+                sys.exit(0)
             except PermissionError as e:
-                print(f"  ❌ {e}", file=sys.stderr)
+                print(f"  ERROR: {e}", file=sys.stderr)
                 sys.exit(1)
             except Exception as e:
-                print(f"  ❌ Error: {e}", file=sys.stderr)
+                print(f"  ERROR: {e}", file=sys.stderr)
                 sys.exit(1)
         else:  # status
-            pinned = is_pinned()
-            print(f"  Hosts pinning: {'✅ Active' if pinned else '❌ Not active'}")
-            if pinned:
-                print("  Run 'sudo antigravity-unlock setup remove' to unpin")
+            pins = find_pins()
+            print(f"  Pin lines in /etc/hosts: {len(pins)}")
+            for lineno, line, marked in pins:
+                origin = "marked block" if marked else "unmarked (older release)"
+                print(f"    line {lineno}: {line}   [{origin}]")
+            if pins:
+                print("  These are leftovers from <=1.4.x and serve no purpose now.")
+                print("  Run 'sudo antigravity-unlock setup remove' to delete them.")
             else:
-                print("  Run 'sudo antigravity-unlock setup apply' to pin")
+                print("  Clean - agy resolves CloudCode normally.")
         sys.exit(0)
 
     else:
@@ -429,19 +496,19 @@ def main():
             cfg = load_config()
             active_strat = strategy or cfg.get("strategy", DEFAULT_STRATEGY)
             print(f"Enforcing active strategy '{active_strat}'...")
-            ok, msg, _ = enforce_strategy(strategy=active_strat)
+            ok, msg, _ = enforce_strategy(
+                strategy=active_strat,
+                include_optional=bool(cfg.get("include_optional", False)),
+            )
             print(f"Result: {msg}")
-            for ide_dir in find_ide_installations():
-                ok, ep_msg = apply_ide_endpoint(ide_dir)
-                if ep_msg:
-                    print(f"Endpoint ({ide_dir}): {ep_msg}")
             print("\nUsage tips:")
-            print("  antigravity-unlock --strategy auto     (Auto: in-place with 1.1.9 fallback)")
-            print("  antigravity-unlock --strategy in_place (Patch installed agy in-place)")
-            print("  antigravity-unlock --strategy pin      (Restore and lock agy 1.1.9)")
-            print("  antigravity-unlock pin strategy auto   (Set default strategy in config)")
-            print("  antigravity-unlock autostart install   (Install background guardian)")
+            print("  antigravity-unlock patch               (Patch the installed agy in place)")
+            print("  antigravity-unlock doctor              (Layered diagnosis, ends with a live agy run)")
+            print("  antigravity-unlock run -- <agy args>   (Patch if needed, then exec agy)")
+            print("  antigravity-unlock autostart install   (Re-patch automatically after agy self-updates)")
+            print("  antigravity-unlock pin strategy in_place|auto|pin")
             print("  antigravity-unlock restore             (Restore original binary)")
+            print("  sudo antigravity-unlock setup remove   (Delete /etc/hosts pins left by <=1.4.x)")
 
 
 if __name__ == "__main__":

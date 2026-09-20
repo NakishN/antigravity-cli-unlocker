@@ -1,7 +1,7 @@
 #!/bin/bash
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║                  Antigravity CLI Unlocker v2.3.0                     ║
-# ║   Обход региональных ограничений, фиксация версии & автозапуск (Linux)║
+# ║                  Antigravity CLI Unlocker v1.5.0                     ║
+# ║        Патч eligibility-гейта, диагностика & автозапуск (Linux)      ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 set -euo pipefail
@@ -14,20 +14,16 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+VERSION="1.5.0"
 ISSUES_URL="https://github.com/NakishN/antigravity-cli-unlocker/issues"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_CORE="$SCRIPT_DIR/antigravity_unlock.py"
 
-DNS_PRIMARY="111.88.96.50"
-DNS_SECONDARY="111.88.96.51"
-DNS_PRIMARY_V6="2a00:ab00:1233:26::50"
-DNS_SECONDARY_V6="2a00:ab00:1233:26::51"
-
 print_banner() {
     echo ""
     echo -e "${CYAN}${BOLD}====================================================================${NC}"
-    echo -e "${CYAN}${BOLD}                  Antigravity CLI Unlocker v2.3.0                    ${NC}"
-    echo -e "${CYAN}${BOLD}    Обход региональных ограничений, фиксация 1.1.9 & автозапуск  ${NC}"
+    echo -e "${CYAN}${BOLD}                  Antigravity CLI Unlocker v${VERSION}                   ${NC}"
+    echo -e "${CYAN}${BOLD}     Патч eligibility-гейта, диагностика и защита от автообновлений  ${NC}"
     echo -e "${CYAN}${BOLD}====================================================================${NC}"
     echo ""
 }
@@ -36,7 +32,7 @@ ok()   { echo -e "  ${GREEN}[ОК]${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[ВНИМАНИЕ]${NC} $*"; }
 err()  { echo -e "  ${RED}[ОШИБКА]${NC} $*"; }
 info() { echo -e "  ${BLUE}[ИНФО]${NC} $*"; }
-step() { echo -e "\n${BOLD}[$1/2] $2${NC}"; }
+step() { echo -e "\n${BOLD}[$1] $2${NC}"; }
 
 print_issues_help() {
     echo ""
@@ -61,107 +57,89 @@ run_python_core() {
     python3 "$PYTHON_CORE" "$@"
 }
 
-step_dns() {
-    step 2 "Настройка системной DNS-маршрутизации"
+# ── Удалено в 1.5.0 ────────────────────────────────────────────────────────
+# Раньше здесь был step_dns: systemd-resolved drop-in, направлявший CloudCode
+# на Smart DNS (xbox-dns.ru, 111.88.96.50/51).  Проверка 2026-09-20 показала,
+# что эти резолверы возвращают для cloudcode-pa.googleapis.com и
+# daily-cloudcode-pa.googleapis.com те же самые реальные IP Google, что и
+# 8.8.8.8 — подмены нет.  Подменялся только generativelanguage, который agy не
+# использует.  Шаг менял системный DNS, требуя sudo, и не давал ничего.
+#
+# Eligibility-гейт — это клиентская проверка серверного protobuf-поля, и её
+# снимает патч бинарника.  Проверено на agy 1.2.7 с российского IP без VPN,
+# прокси и подмены DNS: `agy -p` возвращает реальные ответы модели.
+# ───────────────────────────────────────────────────────────────────────────
 
-    info "Адреса DNS-серверов: $DNS_PRIMARY, $DNS_SECONDARY"
-
-    local conf_dir="/etc/systemd/resolved.conf.d"
-    local conf_file="$conf_dir/antigravity-unlock.conf"
-
-    if [[ -f "$conf_file" ]] && grep -q "111.88.96.50" "$conf_file" 2>/dev/null; then
-        ok "Конфигурация systemd-resolved уже активна: $conf_file"
-        return 0
-    fi
-
-    if ! systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-        warn "Служба systemd-resolved не активна. Автоматическая настройка DNS пропущена."
-        warn "Запустите службу: sudo systemctl enable --now systemd-resolved"
-        return 0
-    fi
-
-    info "Требуются права root (sudo) для записи $conf_file"
-    echo ""
-
-    local tmp_conf
-    tmp_conf=$(mktemp /tmp/antigravity-dns-XXXXXX.conf)
-    cat > "$tmp_conf" << EOF
-# Antigravity CLI Unlocker Configuration
-# Only the two hosts that Antigravity actually talks to AND that the
-# unblock resolver actually substitutes.  Everything else (accounts,
-# oauth2, www, etc.) stays on the system default resolver.
-[Resolve]
-DNS=$DNS_PRIMARY $DNS_SECONDARY
-FallbackDNS=$DNS_PRIMARY_V6 $DNS_SECONDARY_V6
-Domains=~daily-cloudcode-pa.googleapis.com ~generativelanguage.googleapis.com
-EOF
-
-    if sudo bash -c "
-        set -e
-        mkdir -p '$conf_dir'
-        cp '$tmp_conf' '$conf_file'
-        chmod 644 '$conf_file'
-        systemctl restart systemd-resolved
-        resolvectl flush-caches 2>/dev/null || true
-    "; then
-        rm -f "$tmp_conf"
-        ok "Конфигурация DNS создана: $conf_file"
-        ok "Служба systemd-resolved перезапущена, кэш DNS очищен"
-    else
-        rm -f "$tmp_conf"
-        err "Ошибка при записи конфигурации systemd-resolved."
-        print_issues_help
-    fi
-
-    sleep 1
-    if curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
-        https://generativelanguage.googleapis.com/ 2>/dev/null | grep -qE "^(200|400|403|404)$"; then
-        ok "Соединение с Google API успешно подтверждено."
-    else
-        warn "Таймаут проверки соединения. Запустите agy для проверки работы."
-    fi
-}
-
-step_ipv4_priority() {
-    info "Проверка IPv4 приоритета..."
-    if ip -6 addr show scope global 2>/dev/null | grep -q inet6; then
-        info "Глобальный IPv6 обнаружен — приоритет не меняется."
-        return 0
-    fi
-
+step_restore_ipv4() {
     local gai_conf="/etc/gai.conf"
     local marker="# antigravity-unlocker: prefer IPv4"
-
     if [[ -f "$gai_conf" ]] && grep -q "$marker" "$gai_conf" 2>/dev/null; then
-        ok "IPv4 приоритет уже настроен в $gai_conf"
-        return 0
-    fi
-
-    info "Глобальный IPv6 не обнаружен. Приоритизация IPv4."
-    info "Требуются права root (sudo) для записи $gai_conf"
-
-    if sudo bash -c "
-        echo '' >> '$gai_conf'
-        echo '$marker' >> '$gai_conf'
-        echo 'precedence  ::ffff:0:0/96  46' >> '$gai_conf'
-        echo 'label  ::ffff:0:0/96   2' >> '$gai_conf'
-    "; then
-        ok "IPv4 приоритет применён: $gai_conf"
-    else
-        warn "Не удалось применить IPv4 приоритет (пропустите, если IPv6 работает)."
+        if sudo -n sed -i "/$marker/,+2d" "$gai_conf" 2>/dev/null; then
+            ok "IPv4 приоритет удалён из $gai_conf"
+        else
+            warn "Нужны права root. Выполните вручную:"
+            echo -e "       ${BOLD}sudo sed -i '/$marker/,+2d' $gai_conf${NC}"
+        fi
     fi
 }
 
-step_restore_dns() {
+step_report_legacy() {
+    # Только чтение и без sudo: основной сценарий разблокировки не должен
+    # требовать root и не должен блокироваться на запросе пароля.  Удаление —
+    # за явным --cleanup-legacy / --restore.
     local conf_file="/etc/systemd/resolved.conf.d/antigravity-unlock.conf"
+    local found=0
+
     if [[ -f "$conf_file" ]]; then
-        sudo bash -c "
+        warn "Найден устаревший Smart DNS drop-in: $conf_file"
+        found=1
+    fi
+
+    if grep -qE "cloudcode-pa\.googleapis\.com|generativelanguage\.googleapis\.com" /etc/hosts 2>/dev/null; then
+        warn "Найдены устаревшие пины CloudCode в /etc/hosts"
+        found=1
+    fi
+
+    if [[ "$found" -eq 1 ]]; then
+        echo ""
+        echo -e "  Это настройки версий <=1.4.x. Они больше не нужны и могут мешать:"
+        echo -e "  Smart DNS не подменяет CloudCode, а пин в hosts указывает на"
+        echo -e "  эндпоинт, который не завершает TLS-рукопожатие."
+        echo ""
+        echo -e "  Удалить (потребуется sudo):"
+        echo -e "    ${BOLD}bash \"$(realpath "$0")\" --cleanup-legacy${NC}"
+        echo -e "    ${BOLD}sudo python3 \"$PYTHON_CORE\" setup remove${NC}"
+        echo ""
+    fi
+}
+
+step_cleanup_legacy() {
+    # Явная очистка.  sudo -n: если пароля нет, сообщаем и выходим, а не висим.
+    local conf_file="/etc/systemd/resolved.conf.d/antigravity-unlock.conf"
+
+    if [[ -f "$conf_file" ]]; then
+        info "Удаляю устаревший Smart DNS drop-in: $conf_file"
+        if sudo -n bash -c "
             rm -f '$conf_file'
             systemctl restart systemd-resolved 2>/dev/null || true
             resolvectl flush-caches 2>/dev/null || true
-        " && ok "Правила DNS-маршрутизации удалены."
+        " 2>/dev/null; then
+            ok "Устаревшие правила DNS-маршрутизации удалены."
+        else
+            warn "Нужны права root. Выполните вручную:"
+            echo -e "       ${BOLD}sudo rm '$conf_file' && sudo systemctl restart systemd-resolved${NC}"
+        fi
+    else
+        info "Smart DNS drop-in не найден — очищать нечего."
     fi
 
+    if grep -qE "cloudcode-pa\.googleapis\.com|generativelanguage\.googleapis\.com" /etc/hosts 2>/dev/null; then
+        warn "В /etc/hosts остались пины CloudCode. Выполните:"
+        echo -e "       ${BOLD}sudo python3 \"$PYTHON_CORE\" setup remove${NC}"
+    fi
+}
+
+step_restore_ipv4() {
     local gai_conf="/etc/gai.conf"
     local marker="# antigravity-unlocker: prefer IPv4"
     if [[ -f "$gai_conf" ]] && grep -q "$marker" "$gai_conf" 2>/dev/null; then
@@ -176,14 +154,21 @@ main() {
     case "${1:-}" in
         --restore)
             run_python_core restore
-            step_restore_dns
+            step_cleanup_legacy
+            step_restore_ipv4
             echo -e "\n${GREEN}[ОК] Восстановление системы завершено.${NC}\n"
             exit 0
+            ;;
+        --doctor)
+            shift
+            run_python_core doctor "$@"
+            exit $?
             ;;
         --autostart|--install-autostart)
             step 1 "Установка службы автозапуска Guardian (systemd user unit)"
             run_python_core autostart install
-            step_dns
+            echo ""
+            ok "Guardian будет перепатчивать agy после каждого автообновления."
             echo -e "\n${GREEN}[ОК] Автозапуск демона Guardian успешно настроен.${NC}\n"
             exit 0
             ;;
@@ -212,13 +197,17 @@ main() {
             run_python_core status
             exit 0
             ;;
+        --cleanup-legacy)
+            step_cleanup_legacy
+            exit 0
+            ;;
     esac
 
-    step 1 "Обработка бинарника и обеспечение версии 1.1.9 через Python Core v2.3.0"
+    step 1 "Патч установленного бинарника agy"
     run_python_core "$@"
 
-    step_dns
-    step_ipv4_priority
+    step 2 "Проверка устаревших настроек (<=1.4.x)"
+    step_report_legacy
 
     echo ""
     echo -e "${GREEN}${BOLD}====================================================================${NC}"
@@ -226,11 +215,15 @@ main() {
     echo -e "${GREEN}${BOLD}====================================================================${NC}"
     echo ""
     echo -e "  Запуск:         ${BOLD}agy${NC}"
+    echo -e "  Диагностика:    bash \"$(realpath "$0")\" --doctor"
     echo -e "  Автозапуск:     bash \"$(realpath "$0")\" --autostart"
     echo -e "  Удаление авто:  bash \"$(realpath "$0")\" --remove-autostart"
     echo -e "  Откат:          bash \"$(realpath "$0")\" --restore"
-    echo -e "  Тест:           bash \"$(realpath "$0")\" --dry-run"
+    echo -e "  Тест:           bash \"$(realpath "$0")\" patch --dry-run"
     echo -e "  Поддержка:      $ISSUES_URL"
+    echo ""
+    warn "agy самообновляется и затирает патч. Установите автозапуск Guardian:"
+    echo -e "       bash \"$(realpath "$0")\" --autostart"
     echo ""
 }
 

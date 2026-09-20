@@ -28,6 +28,14 @@ class TestVersionsRegistry(unittest.TestCase):
         self.assertIn("eligibility_error_gate", patterns)
         self.assertIn("ineligibility_from_result_gate", patterns)
 
+    def test_1_1_22_and_1_1_27_supported(self):
+        versions = self.vdb["versions"]
+        for ver in ("1.1.22", "1.1.27"):
+            self.assertIn(ver, versions, f"{ver} must be a registered/verified version")
+            patterns = versions[ver].get("wildcard_patterns", [])
+            self.assertIn("eligibility_error_gate", patterns)
+            self.assertIn("ineligibility_from_result_gate", patterns)
+
     def test_version_pattern_references_resolve(self):
         """Every pattern name referenced by a version must be defined at top level."""
         defined = {wp["name"] for wp in self.vdb["wildcard_patterns"]}
