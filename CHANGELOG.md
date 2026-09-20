@@ -15,7 +15,7 @@ All notable changes to the Antigravity CLI Unlocker project will be documented i
 - **Опция `include_optional`** (флаг `patch --include-optional` или ключ конфига) для opt-in паттернов.
 - **Модуль `hosts_cleanup.py`**: удаление пинов из `/etc/hosts`, включая немаркированные строки от совсем старых версий. Только удаление — создать пин модуль не может.
 - **Миграция конфига** (`migrate_config`): дописывает новые ключи и снимает `strategy=pin`, если закреплённая версия **старше** установленной.
-- **Тесты**: `test_config.py`, `test_doctor.py`, `test_guardian.py`, `test_hosts_cleanup.py`; существенно расширен `test_patcher.py` (состояния классификации, исходы repatch, сохранение размера, opt-in паттерны, потоковый подсчёт на нескольких размерах чанка). Итого 81 тест + 16 subtests.
+- **Тесты**: `test_config.py`, `test_doctor.py`, `test_guardian.py`, `test_hosts_cleanup.py`; существенно расширен `test_patcher.py` (состояния классификации, исходы repatch, сохранение размера, opt-in паттерны, потоковый подсчёт на нескольких размерах чанка). Итого 87 тестов + 16 subtests (было 25 тестов).
 
 ### Changed
 - **Стратегия по умолчанию: `auto` → `in_place`.** `agy` обновляется сам, поэтому стратегия, патчащая установленную версию, переживает обновление, а `pin` борется с апдейтером бесконечно.
