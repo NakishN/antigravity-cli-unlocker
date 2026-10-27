@@ -80,14 +80,99 @@ def get_backup_path(agy_path):
     filename = os.path.basename(agy_path) + ".original.bak"
     return os.path.join(app_dir, filename)
 
+def _warn(agy_path, message):
+    """Log a warning without importing logging at module import time."""
+    import logging
+
+    logging.getLogger("antigravity_unlocker").warning("%s: %s", agy_path, message)
+
+
 def backup_binary(agy_path, dry_run=False):
-    """Creates a backup copy of the original agy binary if not already present."""
+    """Back up the *pristine* binary, refreshing a stale backup.
+
+    Two invariants, both learned from a real bug:
+
+    - **Pristine.** The backup must not carry the patch, or ``restore`` becomes a
+      no-op. So an already-patched binary is never copied over a backup.
+    - **Current.** The backup must match the installed build. The old code wrote
+      only when the file was absent, so after an agy self-update the stored
+      backup stayed at the *previous* version and ``restore`` silently downgraded
+      agy - observed live: backup 1.1.27 / 210 MB against installed 1.2.7 / 224 MB.
+
+    Returns ``(backup_path, created_or_refreshed)``.
+    """
     backup_file = get_backup_path(agy_path)
-    if not os.path.exists(backup_file):
-        if not dry_run:
-            shutil.copy2(agy_path, backup_file)
+    try:
+        current_size = os.path.getsize(agy_path)
+    except OSError:
+        current_size = None
+
+    if os.path.exists(backup_file):
+        try:
+            same_size = current_size is not None and os.path.getsize(backup_file) == current_size
+        except OSError:
+            return backup_file, False
+        if same_size:
+            return backup_file, False
+
+        # Size differs: either the backup predates a self-update, or the
+        # installed binary is already patched.  Only the first may be refreshed -
+        # overwriting a pristine backup with a patched image would destroy the
+        # only way back.
+        try:
+            state, _ = classify_binary(agy_path)
+        except OSError:
+            return backup_file, False
+        if state != STATE_UNPATCHED:
+            _warn(agy_path, f"backup does not match installed agy ('{state}'); left untouched")
+            return backup_file, False
+
+        if dry_run:
+            return backup_file, True
+        _warn(agy_path, "refreshing stale backup left over from an older agy")
+        shutil.copy2(agy_path, backup_file)
         return backup_file, True
-    return backup_file, False
+
+    try:
+        state, _ = classify_binary(agy_path)
+    except OSError:
+        state = None
+    if state == STATE_PATCHED:
+        _warn(agy_path, "no pristine backup available: installed agy is already patched")
+        return backup_file, False
+
+    if not dry_run:
+        shutil.copy2(agy_path, backup_file)
+    return backup_file, True
+
+
+def get_backup_info(agy_path):
+    """Describe the restore point for *agy_path*, including whether it is stale.
+
+    ``stale`` means restoring would not give back the installed build - the
+    condition that silently downgrades agy after a self-update.
+    """
+    backup_file = get_backup_path(agy_path)
+    info = {
+        "path": backup_file,
+        "exists": os.path.exists(backup_file),
+        "backup_size": None,
+        "installed_size": None,
+        "stale": False,
+    }
+    try:
+        info["installed_size"] = os.path.getsize(agy_path)
+    except OSError:
+        pass
+    if info["exists"]:
+        try:
+            info["backup_size"] = os.path.getsize(backup_file)
+        except OSError:
+            info["exists"] = False
+    if info["exists"] and info["installed_size"] is not None:
+        info["stale"] = info["backup_size"] != info["installed_size"]
+    return info
+
 
 def restore_binary(agy_path):
     """Restores the original binary from backup."""
@@ -96,6 +181,47 @@ def restore_binary(agy_path):
         shutil.copy2(backup_file, agy_path)
         return True, f"Restored {agy_path} from {backup_file}"
     return False, f"Backup file not found at {backup_file}"
+
+
+def unpatch_binary(agy_path, dry_run=False, include_optional=False):
+    """Reverse every rename in place, without depending on a backup.
+
+    Each signature is a same-length literal swap, so the inverse is exact.  This
+    is the restore path that still works after an agy self-update, when the
+    stored backup belongs to an older build and restoring it would downgrade agy.
+
+    Returns ``(success, message, sha256_after)``.
+    """
+    sha_before = compute_sha256(agy_path)
+    with open(agy_path, "rb") as f:
+        data = bytearray(f.read())
+
+    vdb = load_versions_db()
+    reverted = []
+    for wp in vdb.get("wildcard_patterns", []):
+        if _pattern_tier(wp) == "optional" and not include_optional:
+            continue
+        decoded = _pattern_bytes(wp)
+        if decoded is None or not _pattern_applicable(wp):
+            continue
+        original, replacement = decoded
+        count = data.count(replacement)
+        if count > 0:
+            data[:] = bytes(data).replace(replacement, original)
+            reverted.append(f"{wp.get('name', 'pattern')} ({count}x)")
+
+    if not reverted:
+        state, detail = classify_binary(agy_path)
+        return True, f"Nothing to revert ({state}: {detail})", sha_before
+
+    if dry_run:
+        return True, f"[DRY-RUN] Would revert: {', '.join(reverted)}", sha_before
+
+    err = _write_atomic(agy_path, data)
+    if err is not None:
+        return False, f"Failed writing revert: {err}", sha_before
+
+    return True, f"Reverted: {', '.join(reverted)}", compute_sha256(agy_path)
 
 def _current_platform_tag():
     """Returns a tag like 'linux_x86_64' for platform-specific pattern filtering."""
@@ -323,21 +449,34 @@ def repatch_if_needed(agy_path, dry_run=False, include_optional=False):
     return OUTCOME_PATCHED, msg
 
 
-def _apply_patterns(data, include_optional=False):
+def _apply_patterns(data, include_optional=False, only=None):
     """Apply wildcard patterns to *data* in place.
 
     Returns ``(applied, skipped_platform, missing_best_effort)`` where *applied*
     holds human-readable ``"name (Nx)"`` strings.
+
+    *only* is an allowlist of pattern names.  Naming an optional pattern there
+    is itself the opt-in, so ``only=["proxy_var_isolation"]`` applies exactly
+    that one string rename and none of the others.  That matters because
+    ``--include-optional`` is all-or-nothing and the optional tier mixes two
+    very different kinds of change: length-preserving string renames, which are
+    safe on any build, and byte-exact machine-code rewrites whose offsets were
+    taken from one specific build.  Applying the latter to a build agy has
+    since self-updated to is how you corrupt a 220 MB binary.
     """
     vdb = load_versions_db()
     applied = []
     skipped = []
     missing_best_effort = []
+    only = set(only) if only else None
 
     for wp in vdb.get("wildcard_patterns", []):
         name = wp.get("name", "pattern")
         tier = _pattern_tier(wp)
-        if tier == "optional" and not include_optional:
+        if only is not None:
+            if name not in only:
+                continue
+        elif tier == "optional" and not include_optional:
             continue
 
         decoded = _pattern_bytes(wp)
@@ -359,12 +498,25 @@ def _apply_patterns(data, include_optional=False):
     return applied, skipped, missing_best_effort
 
 
-def patch_binary(agy_path, dry_run=False, force=False, include_optional=False):
+def list_pattern_names():
+    """Every wildcard pattern name in the registry, for validating ``--only``.
+
+    A typo in an allowlist would otherwise apply nothing at all and report
+    success, which is the worst possible outcome for a flag like this.
+    """
+    vdb = load_versions_db()
+    return [wp.get("name", "pattern") for wp in vdb.get("wildcard_patterns", [])]
+
+
+def patch_binary(agy_path, dry_run=False, force=False, include_optional=False,
+                 only=None):
     """
     Patches the agy binary.
     1. Check SHA-256 against versions.json for exact-offset patches
     2. Apply version-agnostic wildcard patterns (bare-literal renames)
     3. Atomically write the patched binary
+
+    *only* restricts step 2 to the named patterns; see ``_apply_patterns``.
 
     Returns ``(success, message, sha256_after)``.  ``success`` is False only for
     a real failure: a build whose primary signature is absent reports True with
@@ -397,7 +549,7 @@ def patch_binary(agy_path, dry_run=False, force=False, include_optional=False):
             break
 
     applied, skipped, missing_best_effort = _apply_patterns(
-        data, include_optional=include_optional
+        data, include_optional=include_optional, only=only
     )
     applied_details.extend(applied)
 

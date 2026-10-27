@@ -13,14 +13,19 @@ from antigravity_unlock.patcher import (
     STATE_FOREIGN,
     STATE_PATCHED,
     STATE_UNPATCHED,
+    backup_binary,
     classify_binary,
     compute_sha256,
     count_needles_stream,
+    get_backup_info,
     get_backup_path,
     inspect_binary,
+    list_pattern_names,
     patch_binary,
     repatch_if_needed,
     restore_binary,
+    unpatch_binary,
+    _apply_patterns,
 )
 
 
@@ -54,7 +59,7 @@ class TestPatcher(_TempBinaryMixin, unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_patch_and_restore_wildcard(self):
-        content = b"header_data_0123_eligibility check failed_footer_data"
+        content = b"header_data_0123_ineligible_footer_name=ineligible_data"
         tmp_path = self._make(content)
 
         orig_size = len(content)
@@ -63,12 +68,29 @@ class TestPatcher(_TempBinaryMixin, unittest.TestCase):
 
         patched_content = self._read(tmp_path)
         self.assertEqual(len(patched_content), orig_size)
-        self.assertIn(b"eligibility check bypass", patched_content)
-        self.assertNotIn(b"eligibility check failed", patched_content)
+        self.assertIn(b"inexigible", patched_content)
+        self.assertNotIn(b"ineligible", patched_content)
 
         rec_ok, rec_msg = restore_binary(tmp_path)
         self.assertTrue(rec_ok)
         self.assertEqual(self._read(tmp_path), content)
+
+    def test_no_pattern_rewrites_user_visible_error_text(self):
+        # Regression: `Eligibility check failed: %w` is a *generic* error wrapper
+        # in agy, not an eligibility-specific string - it also wraps unrelated
+        # failures such as a profile-picture TLS timeout.  Renaming it to
+        # "...bypass" made real errors unreadable, and renaming "Agent execution
+        # terminated due to error." actively hid the cause.  Only wire-level
+        # field names may be touched.
+        from antigravity_unlock.patcher import load_versions_db
+
+        for wp in load_versions_db().get("wildcard_patterns", []):
+            original = bytes.fromhex(wp["pattern"])
+            for banned in (b"check failed", b"terminated", b"bypass"):
+                self.assertNotIn(
+                    banned, original,
+                    f"{wp['name']} rewrites user-visible error text",
+                )
 
 
 class TestStreamCounting(unittest.TestCase):
@@ -254,6 +276,156 @@ class TestRepatchIfNeeded(_TempBinaryMixin, unittest.TestCase):
     def test_missing_file_is_a_failure_not_a_foreign_build(self):
         outcome, msg = repatch_if_needed("/nonexistent/path/to/agy")
         self.assertEqual(outcome, "failed")
+
+
+class TestUnpatchRoundTrip(_TempBinaryMixin, unittest.TestCase):
+    """unpatch must be exact: it is the restore path that works after a
+    self-update, when the stored backup belongs to an older build."""
+
+    def test_unpatch_reverses_patch_byte_for_byte(self):
+        content = (b"pad ineligible pad name=ineligible pad Account ineligible "
+                   b"IneligibleTier IneligibleInfo tail")
+        path = self._make(content)
+
+        patch_binary(path)
+        self.assertNotEqual(self._read(path), content)
+
+        ok, msg, _ = unpatch_binary(path)
+        self.assertTrue(ok)
+        self.assertIn("Reverted", msg)
+        self.assertEqual(self._read(path), content,
+                         "unpatch did not restore the original bytes exactly")
+
+    def test_unpatch_on_pristine_binary_is_a_noop(self):
+        content = b"pad ineligible pad"
+        path = self._make(content)
+        ok, msg, _ = unpatch_binary(path)
+        self.assertTrue(ok)
+        self.assertIn("Nothing to revert", msg)
+        self.assertEqual(self._read(path), content)
+
+    def test_unpatch_preserves_size(self):
+        path = self._make(b"aaa ineligible bbb name=ineligible ccc")
+        before = os.path.getsize(path)
+        patch_binary(path)
+        unpatch_binary(path)
+        self.assertEqual(os.path.getsize(path), before)
+
+    def test_unpatch_dry_run_does_not_write(self):
+        path = self._make(b"pad ineligible pad")
+        patch_binary(path)
+        patched = self._read(path)
+        _, msg, _ = unpatch_binary(path, dry_run=True)
+        self.assertIn("DRY-RUN", msg)
+        self.assertEqual(self._read(path), patched)
+
+    def test_unpatch_leaves_optional_patterns_alone_by_default(self):
+        path = self._make(b"ineligible https_proxy HTTPS_PROXY")
+        patch_binary(path, include_optional=True)
+        unpatch_binary(path)  # default: optional not included
+        data = self._read(path)
+        self.assertIn(b"ineligible", data)
+        self.assertIn(b"AG_LS_PROXY", data, "optional rename must survive a default unpatch")
+
+        unpatch_binary(path, include_optional=True)
+        self.assertIn(b"https_proxy", self._read(path))
+
+
+class TestBackupFreshness(_TempBinaryMixin, unittest.TestCase):
+    """A stale backup makes `restore` a silent downgrade."""
+
+    def test_stale_backup_is_refreshed_from_a_pristine_binary(self):
+        path = self._make(b"old build ineligible")
+        backup, created = backup_binary(path)
+        self.assertTrue(created)
+
+        # agy self-updates: different size, still pristine.
+        with open(path, "wb") as f:
+            f.write(b"a newer and longer build ineligible")
+        info = get_backup_info(path)
+        self.assertTrue(info["stale"], "size mismatch must be reported as stale")
+
+        _, refreshed = backup_binary(path)
+        self.assertTrue(refreshed)
+        self.assertFalse(get_backup_info(path)["stale"])
+        self.assertEqual(self._read(backup), self._read(path))
+
+    def test_patched_binary_never_overwrites_the_backup(self):
+        # The backup is the only way back; clobbering it with a patched image
+        # would make `restore` a no-op.
+        path = self._make(b"pristine ineligible")
+        backup, _ = backup_binary(path)
+        pristine = self._read(backup)
+
+        patch_binary(path)
+        backup_binary(path)
+        self.assertEqual(self._read(backup), pristine,
+                         "backup was overwritten with a patched image")
+
+    def test_missing_backup_for_patched_binary_is_reported_not_faked(self):
+        path = self._make(b"already inexigible")
+        patch_binary(path)  # no-op rename target absent, but classify sees patched
+        backup, created = backup_binary(path)
+        self.assertFalse(created)
+        self.assertFalse(os.path.exists(backup))
+
+
+class TestOnlyAllowlist(unittest.TestCase):
+    """``only`` exists because ``include_optional`` is all-or-nothing.
+
+    The optional tier mixes two very different kinds of change: length-preserving
+    string renames, safe on any build, and byte-exact machine-code rewrites whose
+    offsets were taken from one specific build.  agy self-updates without asking,
+    so applying the latter blind is how a 220 MB binary gets corrupted.  The
+    egress shell hook needs exactly one of them - ``proxy_var_isolation`` - and
+    measured on agy 1.2.11 ``--include-optional`` would also have rewritten
+    ``ineligibility_from_result_gate``, a 16-byte machine-code pattern.
+    """
+
+    def test_registry_exposes_the_names_the_flag_validates_against(self):
+        names = list_pattern_names()
+        self.assertIn("proxy_var_isolation", names)
+        self.assertIn("protobuf_ineligible_bare", names)
+        self.assertEqual(len(names), len(set(names)), "duplicate pattern names")
+
+    def test_only_applies_an_optional_pattern_without_the_flag(self):
+        data = bytearray(b"a https_proxy b ineligible c")
+        applied, _, _ = _apply_patterns(data, only=["proxy_var_isolation"])
+        self.assertEqual(applied, ["proxy_var_isolation (1x)"])
+        self.assertIn(b"AG_LS_PROXY", bytes(data))
+
+    def test_only_leaves_unrequested_patterns_alone(self):
+        # The primary rename is safe, but an allowlist that leaks is not an
+        # allowlist.
+        data = bytearray(b"a https_proxy b ineligible c")
+        _apply_patterns(data, only=["proxy_var_isolation"])
+        self.assertIn(b"ineligible", bytes(data))
+        self.assertNotIn(b"inexigible", bytes(data))
+
+    def test_only_can_select_a_primary_pattern(self):
+        data = bytearray(b"ineligible")
+        applied, _, _ = _apply_patterns(data, only=["protobuf_ineligible_bare"])
+        self.assertEqual(applied, ["protobuf_ineligible_bare (1x)"])
+        self.assertEqual(bytes(data), b"inexigible")
+
+    def test_only_does_not_apply_everything_by_default(self):
+        without = bytearray(b"https_proxy ineligible")
+        _apply_patterns(without)
+        self.assertIn(b"https_proxy", bytes(without), "optional tier must stay off")
+        self.assertIn(b"inexigible", bytes(without))
+
+    def test_empty_allowlist_means_no_restriction(self):
+        # argparse yields None when the flag is absent, and a caller passing []
+        # means the same.  Treating [] as "apply nothing" would silently no-op.
+        data = bytearray(b"ineligible")
+        applied, _, _ = _apply_patterns(data, only=[])
+        self.assertTrue(any("protobuf_ineligible_bare" in a for a in applied), applied)
+
+    def test_unknown_name_applies_nothing(self):
+        data = bytearray(b"https_proxy ineligible")
+        applied, _, _ = _apply_patterns(data, only=["typo_not_a_pattern"])
+        self.assertEqual(applied, [])
+        self.assertEqual(bytes(data), b"https_proxy ineligible")
 
 
 if __name__ == "__main__":

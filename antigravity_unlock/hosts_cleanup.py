@@ -50,8 +50,13 @@ def _write_hosts(content, path=HOSTS_PATH):
         raise PermissionError(f"Need root to write {path}. Run with sudo.")
 
 
-def find_pins(content=None, path=HOSTS_PATH):
-    """Return every pin line, marked or not, as ``(lineno, line, marked)``."""
+def find_pins(content=None, path=HOSTS_PATH, exclude_blocks=()):
+    """Return every pin line, marked or not, as ``(lineno, line, marked)``.
+
+    *exclude_blocks* is a sequence of ``(begin_marker, end_marker)`` pairs whose
+    contents must be ignored.  ``doctor`` uses it for the intentional dnspin
+    block: those entries are a current, working pin, not a 1.4.x leftover.
+    """
     if content is None:
         try:
             content = _read_hosts(path)
@@ -67,6 +72,12 @@ def find_pins(content=None, path=HOSTS_PATH):
     if m:
         marked_span = m.span()
 
+    excluded_spans = []
+    for begin, end in exclude_blocks:
+        match = re.search(re.escape(begin) + r".*?" + re.escape(end), content, re.DOTALL)
+        if match:
+            excluded_spans.append(match.span())
+
     found = []
     offset = 0
     for lineno, line in enumerate(content.splitlines(), 1):
@@ -75,6 +86,8 @@ def find_pins(content=None, path=HOSTS_PATH):
 
         stripped = line.strip()
         inside_marked = bool(marked_span and marked_span[0] <= line_start < marked_span[1])
+        if any(span[0] <= line_start < span[1] for span in excluded_spans):
+            continue
         if not stripped or stripped.startswith("#"):
             continue
         fields = stripped.split()

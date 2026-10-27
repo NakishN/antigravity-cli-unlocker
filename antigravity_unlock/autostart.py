@@ -7,11 +7,75 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from xml.sax.saxutils import escape
 
 SERVICE_NAME = "antigravity-unlocker-guardian"
 TASK_NAME = "AntigravityUnlockerGuardian"
 LAUNCH_AGENT_LABEL = "com.antigravity.unlocker.guardian"
+
+
+def guardian_unit_problem():
+    """Describe why an installed guardian cannot run, or None when it can.
+
+    Distinguishes three states that look identical from the outside - the unit
+    file exists, agy is patched right now, and no guardian process is running:
+    the unit is crash-looping.  ``systemctl is-active`` answers ``activating`` or
+    ``auto-restart`` for a unit that keeps dying, which no "is it enabled?"
+    check can see.
+
+    Lives here rather than in ``doctor`` because ``install_autostart`` needs the
+    same answer in order to stop reporting a successful install for a unit that
+    never started.
+    """
+    if platform.system() != "Linux":
+        return None
+
+    unit = f"{SERVICE_NAME}.service"
+    try:
+        result = _run_command(
+            ["systemctl", "--user", "is-active", unit], check=False
+        )
+    except Exception:
+        return None
+
+    state = (result.stdout or result.stderr or "").strip()
+    if state in ("active", ""):
+        return None
+
+    # An uninstalled unit is not a problem here; callers have their own
+    # "nothing configured" branch.
+    try:
+        listed = _run_command(
+            ["systemctl", "--user", "list-unit-files", unit], check=False
+        ).stdout
+    except Exception:
+        listed = ""
+    if unit not in (listed or ""):
+        return None
+
+    return f"systemd reports '{state}' for {unit}"
+
+
+def runtime_dir():
+    """The dedicated, stable Python environment the guardian is meant to run in.
+
+    Kept inside the app dir rather than in the user's temporary files: a guardian
+    that points at /tmp has silently stopped existing after a reboot or a cache
+    sweep, which looks exactly like the guardian not running at all.
+    """
+    from antigravity_unlock.patcher import get_app_dir
+
+    return os.path.join(get_app_dir(), "runtime")
+
+
+def runtime_python():
+    """Path to the runtime interpreter, or None when it is not set up."""
+    for name in ("python", "python3"):
+        candidate = os.path.join(runtime_dir(), "bin", name)
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def resolve_guardian_command():
@@ -21,6 +85,15 @@ def resolve_guardian_command():
     unlock_bin = shutil.which("antigravity-unlock")
     if unlock_bin:
         return [unlock_bin, "guardian"]
+
+    # Prefer the dedicated runtime over whatever interpreter invoked this
+    # command.  Falling back to sys.executable is the trap that produced a
+    # 137-restart crash loop: an interactive shell inside the source checkout
+    # can import the package, while the same command run by systemd with
+    # cwd=$HOME cannot.
+    runtime = runtime_python()
+    if runtime:
+        return [runtime, "-m", "antigravity_unlock", "guardian"]
 
     return [sys.executable, "-m", "antigravity_unlock", "guardian"]
 
@@ -53,6 +126,13 @@ def render_systemd_unit(command):
     return f"""[Unit]
 Description=Antigravity CLI Version Guardian
 After=network-online.target
+# An unimportable package makes ExecStart fail instantly.  With a plain
+# Restart=always that becomes a 15s loop forever - observed here at 137 restarts
+# - and the install looks healthy the whole time because the unit is present and
+# enabled.  Bounding it turns the silent failure into a stopped unit, which
+# `doctor` reports.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -92,6 +172,143 @@ def render_launch_agent_plist(command):
 """
 
 
+def ensure_runtime():
+    """Make sure the dedicated runtime exists and can import this package.
+
+    Creates the venv and drops a `.pth` pointing at this source tree into it.
+    Deliberately does not pip-install the project: the package is pure stdlib,
+    and installing it would need setuptools on the machine, a writable
+    site-packages (PEP 668 blocks that on Debian/Ubuntu by default), or network
+    access for pip.  The `.pth` achieves the same import from any cwd with
+    none of those.
+
+    Returns ``(path, note)``; *note* is a human-readable line to show when
+    something had to be created or is still wrong.
+    """
+    target = runtime_dir()
+    note = ""
+
+    python = os.path.join(target, "bin", "python")
+    if not os.path.exists(python):
+        os.makedirs(target, exist_ok=True)
+        created = _create_venv(target)
+        if not created:
+            return None, (
+                f"could not create a runtime in {target}. Install the package "
+                f"system-wide instead, or the guardian unit will not start."
+            )
+        note = f"created guardian runtime: {target}"
+
+    # Locate site-packages for whatever base interpreter the venv was built on.
+    try:
+        proc = subprocess.run(
+            [python, "-c",
+             "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
+        purelib = (proc.stdout or "").strip()
+    except Exception:
+        purelib = ""
+    if not purelib:
+        return python, note
+
+    source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    pth = os.path.join(purelib, "antigravity_unlock.pth")
+    try:
+        os.makedirs(purelib, exist_ok=True)
+        current = ""
+        if os.path.exists(pth):
+            with open(pth, encoding="utf-8") as f:
+                current = f.read().strip()
+        if current != source_root:
+            with open(pth, "w", encoding="utf-8") as f:
+                f.write(source_root + "\n")
+            if current:
+                note = (note + "\n" if note else "") + f"updated import path in {pth}"
+    except OSError as e:
+        return python, (note + "\n" if note else "") + f"could not write {pth}: {e}"
+
+    return python, note
+
+
+def _create_venv(target):
+    """Create a virtualenv at *target*, preferring whatever interpreter works."""
+    candidates = []
+    if shutil.which("uv"):
+        candidates.append([shutil.which("uv"), "venv", target])
+    base = sys.executable
+    if base:
+        candidates.append([base, "-m", "venv", target])
+
+    for command in candidates:
+        try:
+            proc = subprocess.run(
+                command, capture_output=True, text=True, timeout=180, check=False,
+            )
+        except Exception:
+            continue
+        if proc.returncode == 0 and os.path.exists(os.path.join(target, "bin", "python")):
+            return True
+    return False
+
+
+def _package_importable(python=None):
+    """True when *python* can ``import antigravity_unlock``.
+
+    The guardian unit runs unattended under ``Restart=always``.  If the ExecStart
+    command cannot import the package it dies instantly and systemd retries
+    every 15s forever, which is what happened here: the unit said
+    ``ExecStart=/usr/bin/python3 -m antigravity_unlock guardian`` while the
+    package lived only in a source checkout on ``sys.path`` for interactive use.
+    The symptom is an install that *looks* protected - the unit is present and
+    enabled - while nothing is actually watching agy, and the crash loop buries
+    the real error in ``journalctl``.
+
+    Returns ``(ok, reason)``; *reason* is the interpreter's own message, because
+    that is what tells the user which python is missing the package.
+    """
+    interpreter = python or sys.executable
+    # Run the probe from a directory that is not the checkout.  Inheriting the
+    # caller's cwd made this return True whenever the user happened to be inside
+    # the source tree - which is exactly the case where the systemd unit still
+    # fails, because systemd runs the unit with cwd=$HOME.  A probe that is easy
+    # to pass by accident is worse than none.
+    probe_dir = tempfile.gettempdir()
+    try:
+        proc = subprocess.run(
+            [interpreter, "-c", "import antigravity_unlock"],
+            capture_output=True, text=True, timeout=15, check=False, cwd=probe_dir,
+        )
+    except Exception as e:  # noqa: BLE001 - any failure means "cannot verify"
+        return False, str(e)
+    if proc.returncode == 0:
+        return True, ""
+    output = (proc.stderr or proc.stdout or "").strip()
+    reason = output.splitlines()[-1] if output else "import failed"
+    return False, reason
+
+
+def _verify_command(command):
+    """Best-effort check that *command* actually runs.
+
+    A guard only, never a blocker: the caller still reports what it installed,
+    and a false negative here would be worse than the bug it prevents.  Only
+    the ``-m`` form is verified, because that is the one that depends on the
+    interpreter being able to import the package.
+    """
+    if "-m" not in command:
+        return None
+    ok, reason = _package_importable(command[0])
+    if ok:
+        return None
+    return (
+        f"warning: {command[0]} cannot import antigravity_unlock ({reason}). "
+        f"The guardian unit would restart-loop without ever protecting agy. "
+        f"Install the package for that interpreter "
+        f"(python3 -m pip install --user .) or remove the autostart entry."
+    )
+
+
 def _run_command(command, check=False):
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if check and result.returncode != 0:
@@ -104,16 +321,49 @@ def install_autostart():
     system = platform.system()
 
     if system == "Linux":
+        runtime, note = ensure_runtime()
+        messages = [m for m in (note, _verify_command(command)) if m]
+
+        # Re-resolve only if the runtime was created just now; an existing one
+        # was already preferred by resolve_guardian_command().
+        if runtime and "-m" in command and command[0] != runtime:
+            command = [runtime, "-m", "antigravity_unlock", "guardian"]
+            messages.append(_verify_command(command))
+
         unit_path = _systemd_unit_path()
         os.makedirs(os.path.dirname(unit_path), exist_ok=True)
         with open(unit_path, "w", encoding="utf-8") as f:
             f.write(render_systemd_unit(command))
 
         _run_command(["systemctl", "--user", "daemon-reload"])
+
+        # A unit that has already burned through its start limit refuses to start
+        # until the counter is cleared, so reinstalling over a broken unit without
+        # this leaves it dead.  Measured 2026-10-07: the unit was rewritten
+        # correctly and still would not come up.
+        _run_command(["systemctl", "--user", "reset-failed", f"{SERVICE_NAME}.service"])
+
         enable = _run_command(["systemctl", "--user", "enable", "--now", f"{SERVICE_NAME}.service"])
         if enable.returncode != 0:
             return False, enable.stderr.strip() or enable.stdout.strip()
-        return True, f"Installed systemd user service: {unit_path}"
+
+        message = f"Installed systemd user service: {unit_path}"
+
+        # `systemctl enable --now` exits 0 even when the unit fails immediately, so
+        # its exit status cannot be trusted to mean "running".  Verified on this
+        # machine: the command printed a job failure and returned 0, which made
+        # install report success for a unit that had never run.  Ask systemd
+        # directly instead.
+        problem = guardian_unit_problem()
+        if problem:
+            detail = (
+                f"but the unit is not running: {problem}. The patch will be wiped by "
+                f"the next agy self-update and nothing will put it back. Check "
+                f"'journalctl --user -u {SERVICE_NAME}.service -n 30'."
+            )
+            return False, "\n".join([message, *messages, detail])
+
+        return True, "\n".join([message, *messages]) if messages else message
 
     if system == "Darwin":
         plist_path = _launch_agent_path()

@@ -1,18 +1,36 @@
 """
 CloudCode endpoint override for Antigravity IDE and CLI.
 
-``cloudcode-pa.googleapis.com`` and ``daily-cloudcode-pa.googleapis.com`` are the
-same service; both were verified reachable on 2026-09-20 and both return the same
-401 ``CREDENTIALS_MISSING`` for an unauthenticated probe.  Nothing about the
-unlock depends on choosing between them - the eligibility gate is a client-side
-check over a server-supplied protobuf field, and the binary patch is what removes
-it.
+**The two endpoints are NOT interchangeable, and this module previously said the
+opposite.**  The old claim rested on an unauthenticated probe from 2026-09-20
+where both hosts returned an identical 401 ``CREDENTIALS_MISSING`` - and this
+project's own 1.5.0 notes already said such a probe cannot distinguish them,
+because Google checks credentials before geography.  The probe proved nothing
+here.
 
-The override therefore exists as an escape hatch, not as a fix, and is applied
-only when explicitly requested via ``antigravity-unlock endpoint apply``.  It used
-to be written automatically on every patch, on the theory that unblock DNS
-providers substituted the ``daily-`` host but not the production one.  That theory
-died with the Smart-DNS layer in 1.5.0, and silently editing a user's
+Upstream evidence, all reproduced independently (see
+``google-antigravity/antigravity-cli`` issue #1016, still open):
+
+- On the default ``daily-cloudcode-pa`` host, ``gemini-*`` returns
+  ``FAILED_PRECONDITION (400) User location is not supported for the API use.``
+- On the same account, same session, same network, ``claude-sonnet-4-6``
+  returns 200 with real generated text.  Issue #1155 proves this server-side,
+  with the account's own OAuth token and no client involved.
+- Setting ``CLOUD_CODE_URL=https://cloudcode-pa.googleapis.com`` makes the
+  location error **disappear** for Gemini, replaced by
+  ``RESOURCE_EXHAUSTED (429)``.
+- So the gate is applied by the backend per host, not by the client binary.
+
+Measured here on 2026-10-07 (Estonia egress, quota available): the production
+host returned 429 for ``gemini-3.8-flash-high``, ``claude-sonnet-4-6`` and
+``gpt-oss-120b-medium`` alike - the location gate is genuinely gone there, but
+this consumer account has zero quota on that project.  For this account the two
+hosts are each unusable in a different way, so the override is still applied
+only when explicitly requested via ``antigravity-unlock endpoint apply``.  It is
+a diagnostic and an escape hatch, not a fix; it used to be written
+automatically on every patch, on the theory that unblock DNS providers
+substituted the ``daily-`` host but not the production one.  That theory died
+with the Smart-DNS layer in 1.5.0, and silently editing a user's
 ``settings.json`` for no measured benefit is not a trade worth making.
 
 Each surface already has a supported configuration knob:

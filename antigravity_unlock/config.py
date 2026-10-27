@@ -31,6 +31,26 @@ DEFAULT_CONFIG = {
     # Opt-in.  Applies the `optional`-tier patterns (build-specific machine-code
     # gates, and the https_proxy -> AG_LS_PROXY rename).
     "include_optional": False,
+    # Foreign-egress routing.  The binary patch clears the client-side
+    # eligibility gate but not Google's server-side source-IP check, so an
+    # install in a blocked region also needs an exit elsewhere.  Off by default:
+    # an install whose egress is already in a supported region has no reason to
+    # send its traffic anywhere else.
+    "egress_enabled": False,
+    # Ordered list of routes to try.  Each entry is a proxy URL, a preset name
+    # (see egress.PRESETS), or {"label": ..., "url"|"preset": ...}.
+    "egress_routes": [],
+    # Label or URL of the route 'egress test' measured as working.  The wrapper
+    # uses this directly and never probes at launch time.
+    "egress_active": "",
+    # Model for the live probe.  Empty means agy's own default.
+    "egress_model": "",
+    "egress_probe_timeout": 120,
+    # No-VPN DNS pin: query public unblock-DNS services and route only the three
+    # Google API hosts through their relays via a local CONNECT proxy.  Off by
+    # default; it is a third-party dependency and the user should opt in.
+    "dnspin_enabled": False,
+    "dnspin_refresh_seconds": 300,
 }
 
 

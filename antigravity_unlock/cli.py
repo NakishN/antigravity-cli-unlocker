@@ -4,6 +4,7 @@ CLI Interface for Antigravity CLI Unlocker.
 
 import sys
 import os
+import shutil
 import argparse
 
 from antigravity_unlock import __version__
@@ -11,9 +12,12 @@ from antigravity_unlock.discovery import find_agy_binaries, get_primary_agy
 from antigravity_unlock.patcher import (
     classify_binary,
     compute_sha256,
+    get_backup_info,
     get_backup_path,
+    list_pattern_names,
     patch_binary,
     restore_binary,
+    unpatch_binary,
 )
 from antigravity_unlock.runner import run_wrapped_command
 from antigravity_unlock.config import (
@@ -22,8 +26,53 @@ from antigravity_unlock.config import (
     STRATEGY_AUTO,
     STRATEGY_IN_PLACE,
     STRATEGY_PIN,
+    get_config_path,
     load_config,
     migrate_config,
+    save_config,
+)
+from antigravity_unlock.egress import (
+    PRESETS,
+    STATUS_OK,
+    STATUS_PROXY_UNREACHABLE,
+    STATUS_REGION_BLOCKED,
+    build_child_env,
+    classify_agy,
+    describe_route,
+    format_results,
+    parse_route,
+    preset_hint,
+    proxy_var_is_isolated,
+    resolve_spec,
+    route_egress_geo,
+    geo_country,
+    routes_from_config,
+    select_route,
+    status_text,
+    active_route as egress_active_route,
+)
+from antigravity_unlock.model import (
+    ModelSettingsError,
+    RU_MODEL_IDS,
+    backup_model,
+    choose_ru_model,
+    default_model,
+    get_backup_path as get_model_backup_path,
+    get_settings_path as get_agy_settings_path,
+    is_gemini_model,
+    resolve_model_choice,
+    restore_default_model,
+    set_default_model,
+)
+from antigravity_unlock.dnspin import (
+    PIN_HOSTS,
+    format_status,
+    parse_hosts_pin,
+    pin_ips,
+    remove_hosts_pin,
+    resolve_pin,
+    start_proxy as start_dnspin_proxy,
+    write_hosts_pin,
 )
 from antigravity_unlock.pinner import (
     enforce_strategy,
@@ -113,6 +162,10 @@ def status_cmd():
     print(f"  Global IPv6:    {'Yes' if has_global_ipv6() else 'No'}")
     print(f"  IPv4 preferred: {'Yes' if ipv4_preferred() else 'No'}")
 
+    print("\n No-VPN DNS Pin (dnspin):")
+    print(f"  Enabled:  {'Yes' if cfg.get('dnspin_enabled') else 'No'}")
+    print("  Relays:   antigravity-unlock dnspin status")
+
     print("\n CloudCode Endpoint Override:")
     print(f"  Target:    {DAILY_ENDPOINT}")
     from antigravity_unlock.endpoint import _ide_settings_path, IDE_SETTING
@@ -135,6 +188,638 @@ def status_cmd():
     if not ide_installs:
         print("  No IDE installations found.")
     print("")
+
+
+# --------------------------------------------------------------------------
+# model: the zero-cost fix for a blocked region
+# --------------------------------------------------------------------------
+
+MODEL_PROBE_PROMPT = "Reply with exactly: MODEL_OK"
+MODEL_PROBE_TIMEOUT = 120
+
+
+def model_status_cmd():
+    path = get_agy_settings_path()
+    print(f"  Settings: {path}")
+    try:
+        current = default_model(path)
+    except ModelSettingsError as e:
+        print(f"  Error: {e}", file=sys.stderr)
+        return 1
+
+    backup = backup_model(path)
+    print(f"  Default:  {current or '(not set - agy decides)'}")
+    print(f"  Backup:   {get_model_backup_path(path) if backup else 'none'}")
+    if backup:
+        print(f"            (original model: {backup!r})")
+
+    if is_gemini_model(current):
+        print("")
+        print("  Gemini models are refused server-side from a blocked region")
+        print("  (RU/BY/IR/CU/KP/SY/CR) with HTTP 400 'User location is not")
+        print("  supported'.  claude-* and gpt-oss-* answered from a Russian IP")
+        print("  with no VPN at all (measured 2026-10-27).")
+        print("  Cheapest fix:  antigravity-unlock model ru")
+    elif current:
+        print("")
+        print("  This is a non-Gemini model.  Measured working from a Russian IP")
+        print("  with no VPN: claude-sonnet-4-6, claude-opus-4-6-thinking,")
+        print("  gpt-oss-120b-medium.")
+    return 0
+
+
+def _model_live_probe(agy_path, model_id, timeout=MODEL_PROBE_TIMEOUT):
+    """Run one real call with *model_id*.  Returns ``(status, output)``."""
+    import subprocess
+
+    route = egress_active_route(load_config(), agy_path=agy_path)
+    env = build_child_env(route, agy_path=agy_path) if route else None
+    cmd = [
+        agy_path, "-p", MODEL_PROBE_PROMPT,
+        "--model", model_id,
+        "--print-timeout", f"{int(timeout)}s",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, env=env,
+            timeout=timeout + 30, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout", f"no answer within {int(timeout)}s"
+    except Exception as e:  # noqa: BLE001 - report, do not crash the command
+        return "error", str(e)
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    status, _detail = classify_agy(out, proc.returncode)
+    return status, out
+
+
+def model_cmd(sub, model=None, verify=True):
+    path = get_agy_settings_path()
+    agy_path = get_primary_agy()
+    print_banner()
+
+    if sub == "restore":
+        try:
+            ok, msg = restore_default_model(path)
+        except ModelSettingsError as e:
+            print(f"  Error: {e}", file=sys.stderr)
+            return 1
+        print(f"  {'OK' if ok else 'ERROR'}: {msg}")
+        return 0 if ok else 1
+
+    if sub == "status":
+        return model_status_cmd()
+
+    if sub == "ru":
+        try:
+            model_id, display = choose_ru_model(agy_path, preferred=model)
+        except ModelSettingsError as e:
+            print(f"  Error: {e}", file=sys.stderr)
+            return 1
+        why = " (the default; Gemini is refused from a blocked region)" if not model else ""
+        print(f"  Chosen: {display}  [{model_id}]{why}")
+    else:  # set
+        try:
+            model_id, display = resolve_model_choice(model, agy_path=agy_path)
+        except ModelSettingsError as e:
+            print(f"  Error: {e}", file=sys.stderr)
+            return 1
+        print(f"  Chosen: {display}  [{model_id}]")
+        if is_gemini_model(display):
+            print("  Warning: this is a Gemini model.  From a blocked region Google")
+            print("  refuses it server-side even with a patched binary.")
+
+    try:
+        ok, msg = set_default_model(display, path=path)
+    except ModelSettingsError as e:
+        print(f"  Error: {e}", file=sys.stderr)
+        return 1
+    print(f"  {'OK' if ok else 'ERROR'}: {msg}")
+    if not ok:
+        return 1
+
+    if not verify:
+        return 0
+    if not agy_path:
+        print("  Verification skipped: agy binary not found.")
+        return 0
+
+    print(f"\n  Verifying with one real call ({model_id})...")
+    status, out = _model_live_probe(agy_path, model_id)
+    snippet = " / ".join(out.splitlines()[-2:])[:160]
+    if status == STATUS_OK:
+        print(f"  OK: agy answered end-to-end: {snippet!r}")
+        return 0
+    if status == STATUS_REGION_BLOCKED:
+        print("  FAILED: Google still refused this model's region:")
+        print(f"    {out[:300]}")
+        print("  The setting was applied, but this model is gated too. Try another")
+        print("  non-Gemini model:  antigravity-unlock model set <id>")
+        return 1
+    if status == STATUS_PROXY_UNREACHABLE:
+        print(f"  WARNING: the configured exit is down, so nothing could be verified:")
+        print(f"    {out[:300]}")
+        print("  The model setting is saved and takes effect on the next agy start.")
+        return 0
+    print(f"  WARNING: setting saved, but the probe was inconclusive ({status}):")
+    print(f"    {snippet or '(no output)'}")
+    print("  This is often quota (429) rather than a regional refusal. Start agy and")
+    print("  check the model shown in the TUI.")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# dnspin: no-VPN egress via public unblock-DNS relays
+# --------------------------------------------------------------------------
+
+DNSPIN_PROBE_PROMPT = "Reply with exactly: DNSPIN_OK"
+DNSPIN_PROBE_TIMEOUT = 120
+
+
+def _dnspin_chosen(proxy):
+    return pin_ips(proxy.status) if proxy.status else dict(proxy.pinned)
+
+
+def dnspin_status_cmd():
+    print("  Querying geohide/comss/dns-ai and probing the relays...")
+    status = resolve_pin()
+    print("")
+    print(format_status(status))
+    pin = parse_hosts_pin()
+    if pin:
+        entries = ", ".join(f"{host.split('.')[0]}={ips[0]}" for host, ips in pin.items() if ips)
+        print(f"\n  /etc/hosts pin: {entries}")
+    else:
+        print("\n  /etc/hosts pin: none (bare agy uses the direct path)")
+    if any(info.get("chosen") for info in status.values()):
+        print("")
+        print("  At least one relay is alive.  Enable it for the wrapper with:")
+        print("    antigravity-unlock dnspin enable")
+        print("  Make bare agy use it (needs sudo once):")
+        print("    sudo antigravity-unlock dnspin pin-hosts")
+        print("  Then measure a real model call with:")
+        print("    antigravity-unlock dnspin test --model gemini-3.8-flash-low")
+        return 0
+    print("")
+    print("  No live relay right now.  The public unblock-DNS providers may be")
+    print("  down or may not substitute for your region.  Fallbacks:")
+    print("    antigravity-unlock model ru          (Claude/GPT-OSS, no exit)")
+    print("    antigravity-unlock egress ...        (your own VPS/proxy)")
+    return 1
+
+
+def dnspin_pin_hosts_cmd():
+    print("  Resolving and probing public unblock-DNS relays...")
+    status = resolve_pin()
+    chosen = pin_ips(status)
+    if not any(chosen.values()):
+        print("  No live relay found; nothing to pin.", file=sys.stderr)
+        return 1
+    ok, msg = write_hosts_pin(chosen)
+    print(f"  {'OK' if ok else 'ERROR'}: {msg}")
+    if not ok:
+        exe = shutil.which("antigravity-unlock")
+        hint = f"sudo {exe} dnspin pin-hosts" if exe else "sudo antigravity-unlock dnspin pin-hosts"
+        print(f"  Run: {hint}", file=sys.stderr)
+        print("  (sudo may not see ~/.local/bin, so the full path in the hint matters.)",
+              file=sys.stderr)
+        return 1
+    print("  Bare agy now resolves the three API hosts to the relays.")
+    print("  Restart agy (or open a new terminal) and try Gemini.")
+    print("  Refresh later with: sudo antigravity-unlock dnspin pin-hosts")
+    return 0
+
+
+def dnspin_unpin_hosts_cmd():
+    ok, msg = remove_hosts_pin()
+    print(f"  {'OK' if ok else 'ERROR'}: {msg}")
+    return 0 if ok else 1
+
+
+def dnspin_test_cmd(model=None, timeout=DNSPIN_PROBE_TIMEOUT):
+    import subprocess
+
+    model = model or "gemini-3.8-flash-low"
+    agy_path = get_primary_agy()
+    if not agy_path:
+        print("Error: agy binary not found.", file=sys.stderr)
+        return 1
+
+    print("  Resolving and probing public unblock-DNS relays...")
+    try:
+        proxy = start_dnspin_proxy()
+    except Exception as e:  # noqa: BLE001
+        print(f"Error: cannot start dnspin proxy: {e}", file=sys.stderr)
+        return 1
+    try:
+        chosen = _dnspin_chosen(proxy)
+        if not any(chosen.values()):
+            print("  No live relay found; nothing to test.", file=sys.stderr)
+            return 1
+        for host, ips in chosen.items():
+            if ips:
+                print(f"  {host} -> {', '.join(ips[:2])}")
+        route = {"label": "dnspin", "url": f"http://127.0.0.1:{proxy.port}"}
+        env = build_child_env(route, agy_path=agy_path)
+        print(f"\n  Running one real agy call ({model}) through the pin...")
+        proc = subprocess.run(
+            [agy_path, "-p", DNSPIN_PROBE_PROMPT, "--model", model,
+             "--print-timeout", f"{int(timeout)}s"],
+            capture_output=True, text=True, env=env, timeout=timeout + 30, check=False,
+        )
+        out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+        status, _detail = classify_agy(out, proc.returncode)
+        snippet = " / ".join(out.splitlines()[-2:])[:200]
+        if status == STATUS_OK:
+            print(f"  OK: {snippet!r}")
+            print("\n  DNS pin works. Enable it for 'antigravity-unlock run':")
+            print("    antigravity-unlock dnspin enable")
+            return 0
+        if status == STATUS_REGION_BLOCKED:
+            print(f"  REGION-BLOCKED: the relay is not exiting in a supported country: {snippet!r}")
+            print("  Try again later (the provider rotates relays), or use 'model ru' / egress.")
+            return 1
+        print(f"  Inconclusive ({status}): {snippet or '(no output)'}")
+        print("  The pin is live but the model call did not complete; check quota/sign-in.")
+        return 1
+    except subprocess.TimeoutExpired:
+        print("  Timeout: the relay or model call did not finish in time.", file=sys.stderr)
+        return 1
+    finally:
+        proxy.stop()
+
+
+def dnspin_run_cmd(agy_args, timeout=None):
+    import subprocess
+
+    agy_path = get_primary_agy()
+    if not agy_path:
+        print("Error: agy binary not found.", file=sys.stderr)
+        return 1
+    print("  Resolving and probing public unblock-DNS relays...", file=sys.stderr)
+    proxy = start_dnspin_proxy()
+    try:
+        chosen = _dnspin_chosen(proxy)
+        if not any(chosen.values()):
+            print("  No live relay found; running agy without the pin.", file=sys.stderr)
+            return run_wrapped_command(agy_args)
+        route = {"label": "dnspin", "url": f"http://127.0.0.1:{proxy.port}"}
+        env = build_child_env(route, agy_path=agy_path)
+        print("  Egress: dnspin -> " + ", ".join(
+            f"{host.split('.')[0]}={ips[0]}" for host, ips in chosen.items() if ips
+        ), file=sys.stderr)
+        return subprocess.run([agy_path] + list(agy_args), env=env).returncode
+    except KeyboardInterrupt:
+        return 130
+    finally:
+        proxy.stop()
+
+
+def dnspin_serve_cmd(port=0, refresh=300):
+    import time
+
+    proxy = start_dnspin_proxy(port=port, refresh_seconds=refresh)
+    chosen = _dnspin_chosen(proxy)
+    print(f"  dnspin proxy: http://127.0.0.1:{proxy.port}")
+    for host, ips in chosen.items():
+        print(f"  {host} -> {', '.join(ips[:2]) if ips else '(direct fallback)'}")
+    print("  Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        proxy.stop()
+    return 0
+
+
+def dnspin_set_enabled(enabled):
+    cfg = load_config()
+    cfg["dnspin_enabled"] = bool(enabled)
+    path = save_config(cfg)
+    if enabled:
+        print("  dnspin ENABLED. 'antigravity-unlock run' will resolve the public")
+        print("  relays and route only the three Google API hosts through them.")
+        print("  Verify with: antigravity-unlock dnspin test --model gemini-3.8-flash-low")
+        print("  Disable with: antigravity-unlock dnspin disable")
+    else:
+        print("  dnspin DISABLED.")
+    print(f"  Saved to {path}")
+    return 0
+
+
+# --------------------------------------------------------------------------
+# egress: routing agy out through a supported region
+# --------------------------------------------------------------------------
+
+def _entry_label(entry):
+    return entry.get("label") if isinstance(entry, dict) else entry
+
+
+def _entry_url(entry):
+    return entry.get("url") if isinstance(entry, dict) else entry
+
+
+def egress_status_cmd():
+    cfg = load_config()
+    routes = routes_from_config(cfg)
+    active = egress_active_route(cfg)
+
+    print(f"  Routing:  {'ENABLED' if cfg.get('egress_enabled') else 'disabled'}")
+    print(f"  Config:   {get_config_path()}")
+    print(f"  Routes:   {len(routes)}")
+    for route in routes:
+        selected = active is not None and route["label"] == active["label"]
+        print(f"    {'*' if selected else ' '} {describe_route(route)}"
+              f"{'   <- selected' if selected else ''}")
+    if not routes:
+        print("    (none)")
+    if cfg.get("egress_enabled") and routes and active is None:
+        print("  Selected: none - the wrapper falls back to the first route")
+
+    print("")
+    print("  The binary patch clears the client-side eligibility gate.  Google also")
+    print("  refuses the request's source IP server-side ('User location is not")
+    print("  supported for the API use'), and that text is not in the binary, so no")
+    print("  patch can remove it - only an exit in a supported region can.")
+    return 0
+
+
+def egress_presets_cmd():
+    if not PRESETS:
+        print("  (no presets)")
+        return 0
+    for name in sorted(PRESETS):
+        entry = PRESETS[name]
+        print(f"  {name}")
+        print(f"    {entry['url']}")
+        for line in (entry.get("hint") or "").splitlines():
+            print(f"    {line}")
+        print(f"    add it with: antigravity-unlock egress add {name}")
+        print("")
+    return 0
+
+
+def _egress_add_entry(cfg, spec, label=None):
+    """Validate *spec* and append it to ``cfg['egress_routes']``."""
+    try:
+        url, resolved = resolve_spec(spec)
+    except ValueError as e:
+        return False, str(e)
+    if label:
+        resolved = label
+
+    route, err = parse_route(url, label=resolved)
+    if route is None:
+        return False, err
+
+    routes = cfg.setdefault("egress_routes", [])
+    for existing in routes:
+        if _entry_url(existing) == url:
+            if isinstance(existing, dict) and existing.get("label") != resolved:
+                existing["label"] = resolved
+                return True, f"already present, relabelled to {resolved!r}"
+            return True, f"{describe_route(route)} is already configured"
+        if isinstance(existing, dict) and existing.get("label") == resolved:
+            existing["url"] = url
+            return True, f"route {resolved!r} now points at {url}"
+
+    routes.append({"label": resolved, "url": url})
+    return True, f"added {describe_route(route)}"
+
+
+def egress_add_cmd(spec, label=None):
+    if spec is None:
+        print("  Nothing to add.  Presets:")
+        for name in sorted(PRESETS):
+            print(f"    antigravity-unlock egress add {name}")
+        print("  Or any proxy URL:")
+        print("    antigravity-unlock egress add socks5h://host:1080")
+        print("    antigravity-unlock egress add https://user:pass@host:8443")
+        return 1
+
+    cfg = load_config()
+    ok, msg = _egress_add_entry(cfg, spec, label)
+    if not ok:
+        print(f"  Error: {msg}", file=sys.stderr)
+        return 1
+
+    path = save_config(cfg)
+    print(f"  {msg}")
+
+    hint = preset_hint(spec) if isinstance(spec, str) else None
+    if hint:
+        print("")
+        for line in hint.splitlines():
+            print(f"  {line}")
+
+    print(f"\n  Saved to {path}")
+    if cfg.get("egress_enabled"):
+        print("  Measure it:      antigravity-unlock egress test")
+    else:
+        print("  Routing is still off: antigravity-unlock egress enable")
+    return 0
+
+
+def egress_remove_cmd(spec):
+    cfg = load_config()
+    kept, removed = [], None
+    for entry in cfg.get("egress_routes") or []:
+        if removed is None and spec in (_entry_label(entry), _entry_url(entry)):
+            removed = entry
+            continue
+        kept.append(entry)
+
+    if removed is None:
+        print(f"  Error: no route matching {spec!r}.", file=sys.stderr)
+        for route in routes_from_config(cfg):
+            print(f"    {route['label']}", file=sys.stderr)
+        return 1
+
+    cfg["egress_routes"] = kept
+    if cfg.get("egress_active") == _entry_label(removed):
+        cfg["egress_active"] = ""
+    save_config(cfg)
+
+    print(f"  Removed {_entry_label(removed)}")
+    if kept:
+        print("  Still configured:")
+        for route in routes_from_config(cfg):
+            print(f"    {describe_route(route)}")
+        print("  Re-measure:  antigravity-unlock egress test")
+    else:
+        print("  No routes left; agy will go out direct.")
+    return 0
+
+
+def egress_select_cmd(spec):
+    cfg = load_config()
+    match = None
+    for route in routes_from_config(cfg):
+        if spec in (route["label"], route["url"]):
+            match = route
+            break
+
+    if match is None:
+        print(f"  Error: no route matching {spec!r}.", file=sys.stderr)
+        for route in routes_from_config(cfg):
+            print(f"    {route['label']}", file=sys.stderr)
+        return 1
+
+    cfg["egress_active"] = match["label"]
+    save_config(cfg)
+    print(f"  Selected {describe_route(match)}")
+    if not cfg.get("egress_enabled"):
+        print("  Routing is disabled:  antigravity-unlock egress enable")
+    print("  This did not measure anything - 'egress test' proves a route works.")
+    return 0
+
+
+def _egress_set_enabled(enabled):
+    cfg = load_config()
+    cfg["egress_enabled"] = bool(enabled)
+    save_config(cfg)
+
+    if not enabled:
+        print("  Routing disabled.  agy goes out direct again.")
+        print("  Routes are kept; 'egress enable' turns them back on.")
+        return 0
+
+    routes = routes_from_config(cfg)
+    if not routes:
+        print("  Routing enabled, but no routes are configured - agy will still go")
+        print("  out direct.  Add one:  antigravity-unlock egress add warp")
+        return 1
+
+    active = egress_active_route(cfg)
+    if active is None:
+        print("  Routing enabled.  No route is selected yet, so the wrapper uses the")
+        print("  first one.  Measure them:  antigravity-unlock egress test")
+    else:
+        print(f"  Routing enabled through {describe_route(active)}")
+    return 0
+
+
+def egress_test_cmd(model=None, timeout=None, preflight=True):
+    cfg = load_config()
+    routes = routes_from_config(cfg)
+    if not routes:
+        print("  No routes configured.", file=sys.stderr)
+        print("  Add one first:  antigravity-unlock egress add warp", file=sys.stderr)
+        return 1
+
+    agy_path = get_primary_agy()
+    if not agy_path:
+        print("  Error: agy binary not found.", file=sys.stderr)
+        return 1
+
+    probe_timeout = int(timeout or cfg.get("egress_probe_timeout") or 120)
+    probe_model = model or cfg.get("egress_model") or None
+
+    print(f"  agy:     {agy_path}")
+    print(f"  routes:  {len(routes)}")
+    print(f"  model:   {probe_model or 'agy default'}")
+    print("  Each route that passes the TCP check costs one real model call.\n")
+
+    def progress(route, status, detail):
+        print(f"  {route['label'][:24]:<24} {status_text(status):<18} {detail}")
+
+    winner, results = select_route(
+        agy_path, routes, timeout=probe_timeout, model=probe_model,
+        preflight=preflight, on_progress=progress,
+    )
+
+    if winner is None:
+        print("\n  No route produced a model completion.  Nothing was selected.")
+        statuses = {r["status"] for r in results}
+        if statuses and statuses <= {"region_blocked"}:
+            print("  Every exit is still in a blocked region - the proxy is up, but it")
+            print("  is not leaving the country.  Check the VPN/WARP node you are on.")
+            print("  Gemini will stay refused, but you can still work with no exit at all:")
+            print("    antigravity-unlock model ru   (switch the default to Claude)")
+        elif statuses and statuses <= {"unreachable", "proxy_unreachable"}:
+            print("  Nothing was listening on any route.  Start the proxy or VPN first.")
+        else:
+            print("  Detail per route is above; 'antigravity-unlock doctor' gives the")
+            print("  full picture including the binary patch and sign-in state.")
+
+        # A failed measurement does not clear a previous selection: the exit may
+        # be down for a minute and wiping it would silently drop the user back
+        # to a guaranteed region 400.  Say what is still armed instead.
+        if cfg.get("egress_enabled") and cfg.get("egress_active"):
+            print(f"\n  Routing is still ENABLED and pointed at {cfg['egress_active']}, so")
+            print("  'antigravity-unlock run' keeps failing until that exit is back.")
+            print("  To go direct meanwhile:  antigravity-unlock egress disable")
+        return 1
+
+    cfg["egress_active"] = winner["label"]
+    cfg["egress_enabled"] = True
+    save_config(cfg)
+
+    print(f"\n  Selected: {describe_route(winner)}")
+    geo = route_egress_geo(winner, timeout=10.0)
+    country = geo_country(geo)
+    if country:
+        where = (geo.get("city") or geo.get("region") or "")
+        print(f"  Exit:     {country}" + (f" ({where})" if where else ""))
+    else:
+        print("  Exit:     unknown (the geo services did not answer through it)")
+    print("\n  Routing enabled.  'antigravity-unlock run' now uses this exit.")
+    return 0
+
+
+def egress_hook_cmd(sub):
+    """Shell-profile integration, so a bare ``agy`` uses the exit too."""
+    from antigravity_unlock import shellhook
+
+    agy_path = get_primary_agy()
+    cfg = load_config()
+    routes = routes_from_config(cfg)
+    route = egress_active_route(cfg, agy_path=agy_path) or (routes[0] if routes else None)
+
+    if sub == "install":
+        if route is None:
+            print("  No route configured.", file=sys.stderr)
+            print("  Add one first:  antigravity-unlock egress add warp", file=sys.stderr)
+            return 1
+        ok, msg = shellhook.install(route["url"], agy_path=agy_path)
+        if ok:
+            print(f"  {msg}")
+            print("\n  The rename covers the lower-case literal only, so agy still")
+            print("  honours an ambient HTTPS_PROXY - and Go reads that spelling")
+            print("  first.  'egress hook status' reports a conflict if you have one.")
+        else:
+            print(f"  Error: {msg}", file=sys.stderr)
+        return 0 if ok else 1
+
+    if sub == "remove":
+        ok, msg = shellhook.remove()
+        print(f"  {msg}" if ok else f"  Error: {msg}", file=None if ok else sys.stderr)
+        return 0 if ok else 1
+
+    path = shellhook.profile_path()
+    print(f"  Shell:      {os.environ.get('SHELL') or '?'}")
+    print(f"  Profile:    {path or 'unsupported (add the export line by hand)'}")
+    installed = shellhook.current_url(path) if path else None
+    print(f"  Installed:  {installed or '(no managed block)'}")
+    print(f"  Route:      {describe_route(route) if route else '(none configured)'}")
+    if installed and route and installed != route["url"]:
+        print("  NOTE: the profile and the selected route disagree; re-run")
+        print("        'egress hook install' to refresh the block.")
+
+    if agy_path:
+        if proxy_var_is_isolated(agy_path):
+            print("  Patch:      proxy_var_isolation applied - agy reads AG_LS_PROXY")
+        else:
+            print("  Patch:      proxy_var_isolation NOT applied - agy ignores")
+            print("              AG_LS_PROXY entirely.  Fix with:")
+            print("                antigravity-unlock patch --include-optional")
+
+    conflict = shellhook.ambient_proxy_conflict()
+    if conflict:
+        print(f"  WARNING:    ambient {conflict[0]}={conflict[1]} outranks AG_LS_PROXY")
+    return 0
 
 
 def main():
@@ -171,6 +856,13 @@ def main():
         action="store_true",
         help="Also apply opt-in patterns (build-specific machine-code gates, https_proxy rename)",
     )
+    patch_parser.add_argument(
+        "--only", action="append", metavar="PATTERN", default=None,
+        help="Restrict the run to these pattern names (repeatable). Naming an "
+             "optional pattern here is itself the opt-in, so "
+             "'--only proxy_var_isolation' applies just that length-preserving "
+             "string rename and none of the machine-code patterns.",
+    )
 
     # Command: doctor
     doctor_parser = subparsers.add_parser(
@@ -186,8 +878,70 @@ def main():
     # Command: restore
     subparsers.add_parser("restore", help="Restore original agy binary from backup")
 
+    # Command: unpatch
+    unpatch_parser = subparsers.add_parser(
+        "unpatch",
+        help="Reverse the patch in place - no backup needed, unlike 'restore'",
+    )
+    unpatch_parser.add_argument("--dry-run", action="store_true", help="Show what would be reverted")
+    unpatch_parser.add_argument(
+        "--include-optional", action="store_true",
+        help="Also revert opt-in patterns (machine-code gates, https_proxy rename)",
+    )
+
     # Command: status
     subparsers.add_parser("status", help="Show system agy binaries, patch, pin, and autostart status")
+
+    # Command: model
+    model_parser = subparsers.add_parser(
+        "model",
+        help="Manage agy's default model - in a blocked region non-Gemini models "
+             "work with no VPN at all",
+    )
+    model_sub = model_parser.add_subparsers(dest="model_subcommand", help="Model actions")
+    model_sub.add_parser("status", help="Show the current default model and the backup")
+    model_set = model_sub.add_parser("set", help="Set the default model by agy id or display name")
+    model_set.add_argument("model", help="Model id (claude-sonnet-4-6) or display name")
+    model_ru = model_sub.add_parser(
+        "ru",
+        help="Pick a non-Gemini model that works from a blocked region "
+             "(default: claude-sonnet-4-6)",
+    )
+    model_ru.add_argument("--model", default=None, help="Override the chosen model id")
+    model_ru.add_argument(
+        "--no-verify", action="store_true",
+        help="Do not spend one model call proving the new default answers",
+    )
+    model_sub.add_parser("restore", help="Restore the settings file saved before the first change")
+
+    # Command: dnspin
+    dnspin_parser = subparsers.add_parser(
+        "dnspin",
+        help="No-VPN egress: pin the three Google API hosts to public unblock-DNS relays",
+    )
+    dnspin_sub = dnspin_parser.add_subparsers(dest="dnspin_subcommand", help="DNS-pin actions")
+    dnspin_sub.add_parser("status", help="Resolve and probe the public relays")
+    dnspin_test = dnspin_sub.add_parser("test", help="Run one real model call through the pin")
+    dnspin_test.add_argument("--model", default=None,
+                             help="Model for the probe (default: gemini-3.8-flash-low)")
+    dnspin_run = dnspin_sub.add_parser("run", help="Run agy wrapped in the DNS-pin proxy")
+    dnspin_run.add_argument("agy_args", nargs=argparse.REMAINDER,
+                            help="Arguments passed directly to agy")
+    dnspin_serve = dnspin_sub.add_parser("serve", help="Run the local DNS-pin proxy in the foreground")
+    dnspin_serve.add_argument("--port", type=int, default=0,
+                              help="Listen port (default: ephemeral)")
+    dnspin_serve.add_argument("--refresh", type=int, default=300,
+                              help="Re-resolve the relays every N seconds (default: 300)")
+    dnspin_sub.add_parser("enable", help="Use the pin in 'antigravity-unlock run'")
+    dnspin_sub.add_parser("disable", help="Stop using the pin")
+    dnspin_sub.add_parser(
+        "pin-hosts",
+        help="Write relay IPs to /etc/hosts so a bare agy uses them (needs sudo)",
+    )
+    dnspin_sub.add_parser(
+        "unpin-hosts",
+        help="Remove the dnspin block from /etc/hosts (needs sudo)",
+    )
 
     # Command: pin
     pin_parser = subparsers.add_parser("pin", help="Version pinning management")
@@ -233,6 +987,55 @@ def main():
     ep_sub.add_parser("apply", help=f"Set IDE endpoint to {DAILY_ENDPOINT}")
     ep_sub.add_parser("remove", help="Remove IDE endpoint override")
     ep_sub.add_parser("status", help="Show current endpoint status")
+
+    # Command: egress
+    egress_parser = subparsers.add_parser(
+        "egress",
+        help="Route agy out through a supported region - the server-side gate the "
+             "binary patch cannot clear",
+    )
+    eg_sub = egress_parser.add_subparsers(dest="egress_subcommand", help="Egress actions")
+    eg_sub.add_parser("status", help="Show routes, the selected one, and whether routing is on")
+    eg_sub.add_parser("presets", help="List named routes you can add without an address")
+
+    eg_add = eg_sub.add_parser("add", help="Add a route: a preset name or a proxy URL")
+    eg_add.add_argument(
+        "spec", nargs="?", default=None,
+        help="Preset name (e.g. 'warp') or a proxy URL such as socks5h://host:1080",
+    )
+    eg_add.add_argument("--label", default=None, help="Name for this route (default: the URL)")
+
+    eg_rm = eg_sub.add_parser("remove", help="Remove a route by label or URL")
+    eg_rm.add_argument("spec", help="Label or URL of the route to remove")
+
+    eg_sel = eg_sub.add_parser("select", help="Pick the route the wrapper uses, without measuring it")
+    eg_sel.add_argument("spec", help="Label or URL of the route to select")
+
+    eg_test = eg_sub.add_parser(
+        "test",
+        help="Measure every route with one real model call each, then select the winner",
+    )
+    eg_test.add_argument("--model", default=None, help="Model for the probe (default: agy's own)")
+    eg_test.add_argument("--timeout", type=int, default=None, help="Seconds per route (default 120)")
+    eg_test.add_argument(
+        "--no-preflight", action="store_true",
+        help="Skip the TCP reachability check and probe every route with a model call",
+    )
+
+    eg_sub.add_parser("enable", help="Make the wrapper route agy through the selected exit")
+    eg_sub.add_parser("disable", help="Stop routing; agy goes out direct again")
+
+    eg_hook = eg_sub.add_parser(
+        "hook",
+        help="Make a bare 'agy' use the exit too, via AG_LS_PROXY in your shell profile",
+    )
+    hook_sub = eg_hook.add_subparsers(dest="egress_hook_subcommand", help="Hook actions")
+    hook_sub.add_parser(
+        "install",
+        help="Write the managed block (requires the proxy_var_isolation patch)",
+    )
+    hook_sub.add_parser("remove", help="Delete the managed block and nothing else")
+    hook_sub.add_parser("status", help="Show the block, the profile, and any conflicting ambient proxy")
 
     # Command: setup (legacy hosts-pin cleanup only - pinning was removed in 1.5.0)
     setup_parser = subparsers.add_parser(
@@ -311,11 +1114,24 @@ def main():
             print("Error: agy binary not found.", file=sys.stderr)
             sys.exit(1)
         include_optional = getattr(args, "include_optional", False) or load_config().get("include_optional", False)
+        only = getattr(args, "only", None)
+        if only:
+            known = set(list_pattern_names())
+            unknown = [name for name in only if name not in known]
+            if unknown:
+                # A typo here would otherwise apply nothing and still report
+                # success, which is the worst outcome for an allowlist flag.
+                print("Error: unknown pattern name(s): %s" % ", ".join(unknown), file=sys.stderr)
+                print("Known patterns:", file=sys.stderr)
+                for name in sorted(known):
+                    print("  %s" % name, file=sys.stderr)
+                sys.exit(2)
         success, msg, _ = patch_binary(
             agy_path,
             dry_run=getattr(args, "dry_run", False),
             force=getattr(args, "force", False),
             include_optional=include_optional,
+            only=only,
         )
         print(f"Result: {msg}")
         state, detail = classify_binary(agy_path)
@@ -354,8 +1170,46 @@ def main():
         if not agy_path:
             print("Error: agy binary not found.", file=sys.stderr)
             sys.exit(1)
+
+        info = get_backup_info(agy_path)
+        if info["stale"] and not getattr(args, "force", False):
+            print(
+                f"Refusing to restore: the backup is {info['backup_size']} bytes but the\n"
+                f"installed agy is {info['installed_size']}. The backup belongs to an older\n"
+                f"build, so restoring it would silently DOWNGRADE agy.\n"
+                f"\n"
+                f"  Backup:    {info['path']}\n"
+                f"\n"
+                f"To undo the patch without touching the version:\n"
+                f"  antigravity-unlock unpatch\n"
+                f"\n"
+                f"To restore the older build anyway:\n"
+                f"  antigravity-unlock restore --force",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         success, msg = restore_binary(agy_path)
         print(f"Result: {msg}")
+        state, detail = classify_binary(agy_path)
+        print(f"State:  {state} ({detail})")
+        sys.exit(0 if success else 1)
+
+    elif args.command == "unpatch":
+        print_banner()
+        agy_path = get_primary_agy()
+        if not agy_path:
+            print("Error: agy binary not found.", file=sys.stderr)
+            sys.exit(1)
+        include_optional = getattr(args, "include_optional", False) or load_config().get("include_optional", False)
+        success, msg, _ = unpatch_binary(
+            agy_path,
+            dry_run=getattr(args, "dry_run", False),
+            include_optional=include_optional,
+        )
+        print(f"Result: {msg}")
+        state, detail = classify_binary(agy_path)
+        print(f"State:  {state} ({detail})")
         sys.exit(0 if success else 1)
 
     elif args.command == "status":
@@ -425,6 +1279,69 @@ def main():
             sys.exit(0)
         else:
             status_cmd()
+
+    elif args.command == "dnspin":
+        sub = getattr(args, "dnspin_subcommand", None) or "status"
+        if sub != "run":
+            print_banner()
+        if sub == "status":
+            sys.exit(dnspin_status_cmd())
+        elif sub == "test":
+            sys.exit(dnspin_test_cmd(model=getattr(args, "model", None)))
+        elif sub == "run":
+            agy_args = list(getattr(args, "agy_args", []) or [])
+            if agy_args and agy_args[0] == "--":
+                agy_args = agy_args[1:]
+            sys.exit(dnspin_run_cmd(agy_args))
+        elif sub == "serve":
+            sys.exit(dnspin_serve_cmd(
+                port=getattr(args, "port", 0),
+                refresh=getattr(args, "refresh", 300),
+            ))
+        elif sub == "enable":
+            sys.exit(dnspin_set_enabled(True))
+        elif sub == "disable":
+            sys.exit(dnspin_set_enabled(False))
+        elif sub == "pin-hosts":
+            sys.exit(dnspin_pin_hosts_cmd())
+        elif sub == "unpin-hosts":
+            sys.exit(dnspin_unpin_hosts_cmd())
+        else:
+            sys.exit(dnspin_set_enabled(False))
+
+    elif args.command == "model":
+        sub = getattr(args, "model_subcommand", None) or "status"
+        sys.exit(model_cmd(
+            sub,
+            model=getattr(args, "model", None),
+            verify=not getattr(args, "no_verify", False),
+        ))
+
+    elif args.command == "egress":
+        sub = getattr(args, "egress_subcommand", None) or "status"
+        print_banner()
+        if sub == "add":
+            sys.exit(egress_add_cmd(getattr(args, "spec", None), getattr(args, "label", None)))
+        elif sub == "remove":
+            sys.exit(egress_remove_cmd(getattr(args, "spec", None)))
+        elif sub == "select":
+            sys.exit(egress_select_cmd(getattr(args, "spec", None)))
+        elif sub == "test":
+            sys.exit(egress_test_cmd(
+                model=getattr(args, "model", None),
+                timeout=getattr(args, "timeout", None),
+                preflight=not getattr(args, "no_preflight", False),
+            ))
+        elif sub == "enable":
+            sys.exit(_egress_set_enabled(True))
+        elif sub == "disable":
+            sys.exit(_egress_set_enabled(False))
+        elif sub == "presets":
+            sys.exit(egress_presets_cmd())
+        elif sub == "hook":
+            sys.exit(egress_hook_cmd(getattr(args, "egress_hook_subcommand", None) or "status"))
+        else:
+            sys.exit(egress_status_cmd())
 
     elif args.command == "autostart":
         sub = getattr(args, "autostart_subcommand", None) or "status"
@@ -506,6 +1423,9 @@ def main():
             print("  antigravity-unlock doctor              (Layered diagnosis, ends with a live agy run)")
             print("  antigravity-unlock run -- <agy args>   (Patch if needed, then exec agy)")
             print("  antigravity-unlock autostart install   (Re-patch automatically after agy self-updates)")
+            print("  antigravity-unlock egress add warp     (Add an exit in a supported region)")
+            print("  antigravity-unlock egress test         (Measure routes with a real model call, select one)")
+            print("  antigravity-unlock egress hook install (Make a bare 'agy' use that exit too)")
             print("  antigravity-unlock pin strategy in_place|auto|pin")
             print("  antigravity-unlock restore             (Restore original binary)")
             print("  sudo antigravity-unlock setup remove   (Delete /etc/hosts pins left by <=1.4.x)")

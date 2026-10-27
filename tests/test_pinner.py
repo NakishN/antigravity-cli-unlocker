@@ -120,7 +120,9 @@ class TestPinner(unittest.TestCase):
         with open(self.agy_path, "rb") as f:
             content = f.read()
         self.assertIn(b"1.1.17", content)
-        self.assertIn(b"eligibility check bypass", content)
+        # The wire-level field name is renamed; user-visible error text is not.
+        self.assertIn(b"name=inexigible", content)
+        self.assertIn(b"eligibility check failed", content)
 
         # 2. Unknown build: auto mode must NOT silently downgrade to the pinned
         #    binary.  agy self-updates, so replacing a new build with a stale
