@@ -49,6 +49,7 @@ from antigravity_unlock.model import (
     is_gemini_model,
 )
 from antigravity_unlock.dnspin import (
+    parse_hosts_pin,
     pin_ips,
     start_proxy as start_dnspin_proxy,
 )
@@ -622,7 +623,16 @@ def check_endpoint(timeout=DEFAULT_TIMEOUT):
         )]
 
     if local_ip and local_ip not in real_ips:
-        if _in_fake_ip_range(local_ip):
+        dnspin_pin = parse_hosts_pin().get(CLOUDCODE_HOST) or []
+        if local_ip in dnspin_pin:
+            checks.append(_check(
+                "endpoint routing", OK,
+                f"the local resolver returns {local_ip} for {CLOUDCODE_HOST} because of "
+                f"the intentional dnspin /etc/hosts pin. The unauthenticated probe below "
+                f"still targets Google's real address ({', '.join(real_ips[:2])}), so it "
+                f"measures the egress region rather than the pin. Expected and healthy.",
+            ))
+        elif _in_fake_ip_range(local_ip):
             checks.append(_check(
                 "endpoint routing", OK,
                 f"the local resolver returns {local_ip} for {CLOUDCODE_HOST} - that is a "
