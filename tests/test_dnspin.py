@@ -164,6 +164,7 @@ class TestHostsPin(unittest.TestCase):
         )
         self.assertEqual(pins, [])
 
+    @unittest.skipIf(os.name == "nt", "POSIX root check; Windows uses a different path")
     def test_write_requires_root_without_touching_the_file(self):
         # The test runs unprivileged; the function must refuse before opening
         # the target, so a temp path is safe to pass.
@@ -171,7 +172,7 @@ class TestHostsPin(unittest.TestCase):
             {"daily-cloudcode-pa.googleapis.com": ["159.194.200.33"]},
             path="/tmp/does-not-matter-hosts",
         )
-        if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        if os.geteuid() != 0:
             self.assertFalse(ok)
             self.assertIn("sudo", msg)
 

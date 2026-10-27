@@ -83,13 +83,22 @@ class TestAutostart(unittest.TestCase):
         # cwd=$HOME, where the import fails and the unit crash-loops.  That is the
         # exact 137-restart failure, and it slipped past the first version of this
         # check for that reason.
-        ok, reason = _package_importable(sys.executable)
-        self.assertFalse(ok, f"probe inherited cwd: reported importable from the checkout")
+        #
+        # In CI the package is pip-installed, so the import succeeds from every
+        # directory; asserting on the real result would test the runner, not the
+        # code.  Assert the cwd passed to the subprocess instead.
+        with patch.object(autostart.subprocess, "run",
+                          return_value=_FakeCompleted(1, "", "No module named antigravity_unlock")) as run:
+            ok, _reason = _package_importable(sys.executable)
+        self.assertFalse(ok)
+        self.assertEqual(run.call_args.kwargs.get("cwd"), tempfile.gettempdir())
 
     def test_verify_command_warns_when_the_module_is_missing(self):
-        # From a source checkout nothing is installed, so the -m form is exactly
-        # what needs warning about.
-        warning = _verify_command([sys.executable, "-m", "antigravity_unlock", "guardian"])
+        # The -m form depends on importability; pin the probe rather than the
+        # runner's environment (CI installs the package, a checkout may not).
+        with patch.object(autostart, "_package_importable",
+                          return_value=(False, "No module named antigravity_unlock")):
+            warning = _verify_command([sys.executable, "-m", "antigravity_unlock", "guardian"])
         self.assertIsNotNone(warning)
         self.assertIn("restart-loop", warning)
 

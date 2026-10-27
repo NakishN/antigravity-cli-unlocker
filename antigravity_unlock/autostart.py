@@ -69,10 +69,21 @@ def runtime_dir():
     return os.path.join(get_app_dir(), "runtime")
 
 
+def _venv_python(target):
+    """The interpreter path inside a venv, on POSIX and Windows."""
+    if sys.platform.startswith("win"):
+        return os.path.join(target, "Scripts", "python.exe")
+    return os.path.join(target, "bin", "python")
+
+
 def runtime_python():
     """Path to the runtime interpreter, or None when it is not set up."""
+    target = runtime_dir()
+    if sys.platform.startswith("win"):
+        candidate = _venv_python(target)
+        return candidate if os.path.exists(candidate) else None
     for name in ("python", "python3"):
-        candidate = os.path.join(runtime_dir(), "bin", name)
+        candidate = os.path.join(target, "bin", name)
         if os.path.exists(candidate):
             return candidate
     return None
@@ -188,7 +199,7 @@ def ensure_runtime():
     target = runtime_dir()
     note = ""
 
-    python = os.path.join(target, "bin", "python")
+    python = _venv_python(target)
     if not os.path.exists(python):
         os.makedirs(target, exist_ok=True)
         created = _create_venv(target)
@@ -247,7 +258,7 @@ def _create_venv(target):
             )
         except Exception:
             continue
-        if proc.returncode == 0 and os.path.exists(os.path.join(target, "bin", "python")):
+        if proc.returncode == 0 and os.path.exists(_venv_python(target)):
             return True
     return False
 
