@@ -2,6 +2,17 @@
 
 All notable changes to the Antigravity CLI Unlocker project will be documented in this file.
 
+## [1.6.1] - 2026-10-27
+
+Патч-релиз: исправлена обработка оборванного SOCKS5-рукопожатия на Windows, ложное предупреждение `doctor` на intentional `dnspin` hosts-пин, релизная сборка больше не подхватывает старые tracked-файлы из `dist/`, README сокращён до инструкций.
+
+### Fixed
+- `egress._recv_exact` оборачивает `ConnectionAbortedError` (WinError 10053) в `EgressError` — на Windows тест и реальный SOCKS5-клиент больше не падают сырым исключением.
+- `doctor` распознаёт `dnspin`-блок в `/etc/hosts` как намеренный и не советует `setup remove` (раньше это могло сломать рабочий hosts-пин).
+- Release-workflow загружает только собранные per-OS артефакты и проверяет `--version`; старые `dist/`/`build/` удалены из git и добавлены в `.gitignore`.
+- README переписан в практическую инструкцию: установка, `dnspin`, `model ru`, VPS/egress, команды, откат, проблемы, сборка.
+- Тесты: 274 passed + 16 subtests на Linux, Windows и macOS.
+
 ## [1.6.0] - 2026-10-07
 
 Релиз собран вокруг слоя `egress` (региональные проверки две, а не одна) и вокруг четырёх настоящих поломок, найденных на живой машине 2026-10-07 после того, как `agy` был пропатчен вручную и выглядел исправным.
