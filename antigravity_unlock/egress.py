@@ -351,7 +351,13 @@ def active_route(cfg, agy_path=None):
 def _recv_exact(sock, n):
     buf = b""
     while len(buf) < n:
-        chunk = sock.recv(n - len(buf))
+        try:
+            chunk = sock.recv(n - len(buf))
+        except OSError as e:
+            # Windows raises ConnectionAbortedError (WinError 10053) where
+            # POSIX returns an empty read for the same half-closed proxy.
+            # Both mean the same thing to the caller: the handshake died.
+            raise EgressError(f"proxy connection failed: {e}") from e
         if not chunk:
             raise EgressError("proxy closed the connection mid-handshake")
         buf += chunk
