@@ -23,6 +23,7 @@ import os
 import socket
 import struct
 import tempfile
+import time
 import threading
 import unittest
 from unittest.mock import patch
@@ -542,6 +543,12 @@ class TestSocks5Tunnel(unittest.TestCase):
             try:
                 conn, _ = srv.accept()
                 conn.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                # Windows turns an immediate close after send into a reset
+                # (WinError 10053) before the client can read the first two
+                # bytes, so the error is "connection aborted" instead of the
+                # intended "not a SOCKS5 proxy".  Give the bytes a moment to
+                # arrive; this is a test-server timing issue, not client logic.
+                time.sleep(0.2)
                 conn.close()
             except OSError:
                 pass
