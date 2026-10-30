@@ -177,6 +177,19 @@ class TestHostsPin(unittest.TestCase):
             self.assertIn("sudo", msg)
 
 
+class TestPermissionsHint(unittest.TestCase):
+    def test_windows_hint_mentions_administrator_not_sudo(self):
+        with patch.object(dnspin.sys, "platform", "win32"):
+            message = dnspin._permission_hint(r"C:\Windows\hosts", "pin-hosts")
+        self.assertIn("Administrator", message)
+        self.assertNotIn("sudo", message)
+
+    def test_posix_hint_mentions_sudo(self):
+        with patch.object(dnspin.sys, "platform", "linux"):
+            message = dnspin._permission_hint("/etc/hosts", "pin-hosts")
+        self.assertIn("sudo", message)
+
+
 class TestSyncHostsPin(unittest.TestCase):
     """The autopin timer's core: refresh only what actually changed."""
 

@@ -109,6 +109,25 @@ sudo antigravity-unlock dnspin autopin remove
 
 Таймер работает от root и запускает установленный CLI, то есть root доверяет коду в вашем `$HOME`. На однопользовательской машине это обычный компромисс; на общей — не ставьте `autopin`, если другой пользователь может писать в `~/.local/bin`.
 
+`autopin` не устанавливается сам при первом открытии `.exe`/`.AppImage`: это постоянный системный компонент, поэтому его нужно один раз поставить вручную. Таймер общий для машины, то есть пин обновляется для всех пользователей.
+
+```bash
+# Linux, AppImage (путь к .AppImage нужно указать явно: он живёт во временном mount)
+sudo ./Antigravity_Unlocker-x86_64.AppImage dnspin autopin install \
+  --cli "$PWD/Antigravity_Unlocker-x86_64.AppImage"
+
+# Linux, standalone-бинарник (предпочтительнее для таймера: не нужен FUSE)
+sudo ./antigravity-unlock-linux-x86_64 dnspin autopin install
+
+# Windows: PowerShell/cmd от администратора
+antigravity-unlock-windows-x64.exe dnspin autopin install
+
+# macOS
+sudo ./antigravity-unlock-macos-universal dnspin autopin install
+```
+
+Бинарник должен лежать в постоянном каталоге: таймер запускает именно этот файл. Если AppImage из systemd не стартует (нет FUSE), используйте standalone-бинарник.
+
 Релеи — третья сторона: TLS не терминируется, OAuth-токен им не виден, но адреса могут меняться. Если `dnspin` не находит рабочий релей — используйте `model ru`, VPN или свой VPS (ниже).
 
 ---

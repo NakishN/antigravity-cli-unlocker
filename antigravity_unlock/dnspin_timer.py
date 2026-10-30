@@ -338,7 +338,10 @@ def install_autopin(interval=DEFAULT_INTERVAL_SECONDS, command=None):
             _windows_task_command(command),
         ])
         if create.returncode != 0:
-            return False, create.stderr.strip() or create.stdout.strip()
+            detail = create.stderr.strip() or create.stdout.strip()
+            return False, (
+                f"{detail}\nRun this command from an Administrator PowerShell/cmd."
+            )
         _run_command(["schtasks", "/Run", "/TN", TASK_NAME])
         return True, (
             f"Installed scheduled task {TASK_NAME} running as SYSTEM every "

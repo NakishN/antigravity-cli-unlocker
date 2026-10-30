@@ -239,6 +239,15 @@ class TestStatus(unittest.TestCase):
 
 
 class TestPlatforms(unittest.TestCase):
+    def test_windows_admin_failure_is_explained(self):
+        with patch.object(dnspin_timer.platform, "system", return_value="Windows"), \
+             patch.object(dnspin_timer, "_run_command", return_value=_fail("Access is denied.")):
+            ok, message = dnspin_timer.install_autopin(
+                900, command=["C:\\Tools\\antigravity-unlock.exe", "dnspin", "sync-hosts"]
+            )
+        self.assertFalse(ok)
+        self.assertIn("Administrator", message)
+
     def test_windows_install_uses_a_system_task(self):
         calls = []
 
@@ -286,6 +295,8 @@ class TestPlatforms(unittest.TestCase):
 
 class TestCliDispatch(unittest.TestCase):
     def test_autopin_install_passes_interval_and_cli_path(self):
+        import tempfile
+
         captured = {}
 
         def fake_install(interval, command=None):
@@ -293,20 +304,36 @@ class TestCliDispatch(unittest.TestCase):
             captured["command"] = command
             return True, "installed"
 
-        argv = [
-            "antigravity-unlock", "dnspin", "autopin", "install",
-            "--interval", "600", "--cli", "/opt/antigravity-unlock",
-        ]
-        with patch.object(sys, "argv", argv), \
-             patch.object(cli, "install_autopin", side_effect=fake_install):
-            with self.assertRaises(SystemExit) as raised:
-                cli.main()
+        with tempfile.TemporaryDirectory() as tmp:
+            cli_path = os.path.join(tmp, "antigravity-unlock")
+            with open(cli_path, "w", encoding="utf-8") as f:
+                f.write("")
+            argv = [
+                "antigravity-unlock", "dnspin", "autopin", "install",
+                "--interval", "600", "--cli", cli_path,
+            ]
+            with patch.object(sys, "argv", argv), \
+                 patch.object(cli, "install_autopin", side_effect=fake_install):
+                with self.assertRaises(SystemExit) as raised:
+                    cli.main()
         self.assertEqual(raised.exception.code, 0)
         self.assertEqual(captured["interval"], 600)
         self.assertEqual(
             captured["command"],
-            [os.path.abspath("/opt/antigravity-unlock"), "dnspin", "sync-hosts"],
+            [os.path.abspath(cli_path), "dnspin", "sync-hosts"],
         )
+
+    def test_autopin_install_rejects_a_missing_cli_path(self):
+        argv = [
+            "antigravity-unlock", "dnspin", "autopin", "install",
+            "--cli", "/definitely/missing/antigravity-unlock",
+        ]
+        with patch.object(sys, "argv", argv), \
+             patch.object(cli, "install_autopin") as install:
+            with self.assertRaises(SystemExit) as raised:
+                cli.main()
+        self.assertEqual(raised.exception.code, 1)
+        install.assert_not_called()
 
     def test_sync_hosts_exit_code_follows_the_sync_result(self):
         argv = ["antigravity-unlock", "dnspin", "sync-hosts"]

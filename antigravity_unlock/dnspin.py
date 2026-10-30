@@ -372,6 +372,15 @@ def parse_hosts_pin(content=None, path=None):
     return result
 
 
+def _permission_hint(path, action):
+    if sys.platform.startswith("win"):
+        return (
+            f"need Administrator rights to write {path}; run this command from an "
+            f"elevated PowerShell/cmd: antigravity-unlock dnspin {action}"
+        )
+    return f"need root to write {path}; run: sudo antigravity-unlock dnspin {action}"
+
+
 def write_hosts_pin(pinned, path=None):
     """Write the dnspin block to /etc/hosts.  Returns ``(ok, message)``."""
     path = path or hosts_path()
@@ -379,7 +388,7 @@ def write_hosts_pin(pinned, path=None):
     if not entries:
         return False, "no live relay to pin"
     if not sys.platform.startswith("win") and hasattr(os, "geteuid") and os.geteuid() != 0:
-        return False, f"need root to write {path}; run: sudo antigravity-unlock dnspin pin-hosts"
+        return False, _permission_hint(path, "pin-hosts")
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -393,7 +402,7 @@ def write_hosts_pin(pinned, path=None):
             pass
         os.replace(tmp, path)
     except PermissionError:
-        return False, f"need root to write {path}; run: sudo antigravity-unlock dnspin pin-hosts"
+        return False, _permission_hint(path, "pin-hosts")
     except OSError as e:
         return False, f"cannot write {path}: {e}"
     count = sum(len(ips) for ips in entries.values())
@@ -404,7 +413,7 @@ def remove_hosts_pin(path=None):
     """Remove the dnspin block from /etc/hosts.  Returns ``(ok, message)``."""
     path = path or hosts_path()
     if not sys.platform.startswith("win") and hasattr(os, "geteuid") and os.geteuid() != 0:
-        return False, f"need root to write {path}; run: sudo antigravity-unlock dnspin unpin-hosts"
+        return False, _permission_hint(path, "unpin-hosts")
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
@@ -420,7 +429,7 @@ def remove_hosts_pin(path=None):
             pass
         os.replace(tmp, path)
     except PermissionError:
-        return False, f"need root to write {path}; run: sudo antigravity-unlock dnspin unpin-hosts"
+        return False, _permission_hint(path, "unpin-hosts")
     except OSError as e:
         return False, f"cannot write {path}: {e}"
     return True, f"removed the dnspin block from {path}"

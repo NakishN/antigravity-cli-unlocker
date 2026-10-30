@@ -433,6 +433,9 @@ def dnspin_autopin_cmd(action, interval=None, cli_path=None):
     action = action or "status"
 
     if action == "install":
+        if cli_path and not os.path.isfile(cli_path):
+            print(f"  ERROR: --cli path does not exist: {cli_path}", file=sys.stderr)
+            return 1
         command = [os.path.abspath(cli_path), *SYNC_ARGS] if cli_path else None
         ok, msg = install_autopin(
             DEFAULT_INTERVAL_SECONDS if interval is None else interval,
