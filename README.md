@@ -92,6 +92,23 @@ antigravity-unlock dnspin status
 sudo antigravity-unlock dnspin pin-hosts
 ```
 
+### Автообновление пина
+
+Чтобы не повторять `pin-hosts` после каждой ротации, поставь системный таймер (root нужен один раз):
+
+```bash
+sudo antigravity-unlock dnspin autopin install
+```
+
+По умолчанию релеи перепроверяются раз в 15 минут. Блок в `/etc/hosts` переписывается только когда адреса реально изменились; если живого релея нет, прежний пин сохраняется, а таймер повторяет попытку. Интервал меняется через `--interval 900` (секунды, минимум 300).
+
+```bash
+antigravity-unlock dnspin autopin status
+sudo antigravity-unlock dnspin autopin remove
+```
+
+Таймер работает от root и запускает установленный CLI, то есть root доверяет коду в вашем `$HOME`. На однопользовательской машине это обычный компромисс; на общей — не ставьте `autopin`, если другой пользователь может писать в `~/.local/bin`.
+
 Релеи — третья сторона: TLS не терминируется, OAuth-токен им не виден, но адреса могут меняться. Если `dnspin` не находит рабочий релей — используйте `model ru`, VPN или свой VPS (ниже).
 
 ---
@@ -163,6 +180,8 @@ exec $SHELL
 | `antigravity-unlock dnspin test` | проверить Gemini через публичные релеи |
 | `antigravity-unlock dnspin enable` | использовать `dnspin` в `run` |
 | `antigravity-unlock dnspin pin-hosts` | закрепить релеи для голого `agy` (sudo) |
+| `antigravity-unlock dnspin autopin install` | автообновление hosts-пина (sudo один раз) |
+| `antigravity-unlock dnspin sync-hosts` | один цикл обновления пина (для таймера) |
 | `antigravity-unlock model ru` | переключить `agy` на Claude/GPT-OSS |
 | `antigravity-unlock egress add/test/enable` | свой прокси или VPS |
 | `antigravity-unlock autostart install` | Guardian в автозапуск |

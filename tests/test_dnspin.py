@@ -177,6 +177,90 @@ class TestHostsPin(unittest.TestCase):
             self.assertIn("sudo", msg)
 
 
+class TestSyncHostsPin(unittest.TestCase):
+    """The autopin timer's core: refresh only what actually changed."""
+
+    def _write(self, tmp, pinned):
+        path = os.path.join(tmp, "hosts")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(dnspin.render_hosts_pin("127.0.0.1 localhost\n", pinned))
+        return path
+
+    def test_no_relay_keeps_the_previous_pin(self):
+        import tempfile
+
+        daily = "daily-cloudcode-pa.googleapis.com"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {daily: ["1.1.1.1"]})
+            with open(path, encoding="utf-8") as f:
+                before = f.read()
+            code, message = dnspin.sync_hosts_pin(
+                path=path, resolve=lambda: {daily: {"chosen": []}}
+            )
+            with open(path, encoding="utf-8") as f:
+                after = f.read()
+        self.assertEqual(code, 0)
+        self.assertIn("keeping the previous pin", message)
+        self.assertEqual(before, after)
+
+    def test_no_relay_and_no_pin_is_an_error(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "hosts")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("127.0.0.1 localhost\n")
+            code, message = dnspin.sync_hosts_pin(
+                path=path, resolve=lambda: {"daily-cloudcode-pa.googleapis.com": {"chosen": []}}
+            )
+        self.assertEqual(code, 2)
+        self.assertIn("nothing to write", message)
+
+    def test_resolver_failure_is_not_a_crash(self):
+        def boom():
+            raise OSError("network down")
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            code, message = dnspin.sync_hosts_pin(
+                path=os.path.join(tmp, "hosts"), resolve=boom
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("network down", message)
+
+    def test_changed_relay_is_written_and_missing_hosts_keep_old_ips(self):
+        import tempfile
+
+        daily = "daily-cloudcode-pa.googleapis.com"
+        cloud = "cloudcode-pa.googleapis.com"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {daily: ["1.1.1.1"], cloud: ["2.2.2.2"]})
+            status = {
+                daily: {"chosen": [{"ip": "9.9.9.9", "latency": 0.1}]},
+                cloud: {"chosen": []},
+            }
+            with patch.object(dnspin.os, "geteuid", return_value=0, create=True):
+                code, message = dnspin.sync_hosts_pin(path=path, resolve=lambda: status)
+            pin = dnspin.parse_hosts_pin(path=path)
+        self.assertEqual(code, 0, message)
+        self.assertEqual(pin[daily], ["9.9.9.9"])
+        self.assertEqual(pin[cloud], ["2.2.2.2"])
+
+    def test_unchanged_pin_does_not_rewrite_the_file(self):
+        import tempfile
+
+        daily = "daily-cloudcode-pa.googleapis.com"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {daily: ["1.1.1.1"]})
+            status = {daily: {"chosen": [{"ip": "1.1.1.1", "latency": 0.1}]}}
+            with patch.object(dnspin, "write_hosts_pin") as write:
+                code, message = dnspin.sync_hosts_pin(path=path, resolve=lambda: status)
+        self.assertEqual(code, 0)
+        self.assertIn("already current", message)
+        write.assert_not_called()
+
+
 class TestConfig(unittest.TestCase):
     def test_dnspin_is_off_by_default(self):
         self.assertFalse(DEFAULT_CONFIG["dnspin_enabled"])

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "antigravity-cli-unlocker"
-version = "1.6.1"
+version = "1.7.0"
 description = "Cross-Platform Patcher, Doctor & Autostart Guardian for Google Antigravity CLI (agy)"
 readme = "README.md"
 authors = [{ name = "NakishN" }]

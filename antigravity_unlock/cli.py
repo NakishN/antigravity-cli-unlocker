@@ -72,7 +72,15 @@ from antigravity_unlock.dnspin import (
     remove_hosts_pin,
     resolve_pin,
     start_proxy as start_dnspin_proxy,
+    sync_hosts_pin,
     write_hosts_pin,
+)
+from antigravity_unlock.dnspin_timer import (
+    DEFAULT_INTERVAL_SECONDS,
+    SYNC_ARGS,
+    autopin_status,
+    install_autopin,
+    remove_autopin,
 )
 from antigravity_unlock.pinner import (
     enforce_strategy,
@@ -165,6 +173,13 @@ def status_cmd():
     print("\n No-VPN DNS Pin (dnspin):")
     print(f"  Enabled:  {'Yes' if cfg.get('dnspin_enabled') else 'No'}")
     print("  Relays:   antigravity-unlock dnspin status")
+    auto = autopin_status()
+    auto_state = "not installed"
+    if auto["installed"]:
+        auto_state = "active" if auto["active"] else f"installed but {auto['detail'] or 'inactive'}"
+        if auto.get("interval"):
+            auto_state += f", every {auto['interval']}s"
+    print(f"  Auto-refresh: {auto_state}")
 
     print("\n CloudCode Endpoint Override:")
     print(f"  Target:    {DAILY_ENDPOINT}")
@@ -351,6 +366,13 @@ def dnspin_status_cmd():
         print(f"\n  /etc/hosts pin: {entries}")
     else:
         print("\n  /etc/hosts pin: none (bare agy uses the direct path)")
+    auto = autopin_status()
+    if auto["installed"]:
+        state = "active" if auto["active"] else f"INACTIVE ({auto['detail']})"
+        print(f"  /etc/hosts auto-refresh: {state}")
+    else:
+        print("  /etc/hosts auto-refresh: not installed "
+              "(sudo antigravity-unlock dnspin autopin install)")
     if any(info.get("chosen") for info in status.values()):
         print("")
         print("  At least one relay is alive.  Enable it for the wrapper with:")
@@ -387,6 +409,7 @@ def dnspin_pin_hosts_cmd():
     print("  Bare agy now resolves the three API hosts to the relays.")
     print("  Restart agy (or open a new terminal) and try Gemini.")
     print("  Refresh later with: sudo antigravity-unlock dnspin pin-hosts")
+    print("  Or keep it fresh automatically: sudo antigravity-unlock dnspin autopin install")
     return 0
 
 
@@ -394,6 +417,51 @@ def dnspin_unpin_hosts_cmd():
     ok, msg = remove_hosts_pin()
     print(f"  {'OK' if ok else 'ERROR'}: {msg}")
     return 0 if ok else 1
+
+
+def dnspin_sync_hosts_cmd(quiet=False):
+    """Refresh the hosts pin from live relays; used by the autopin timer."""
+    code, msg = sync_hosts_pin()
+    if code != 0 and "need root" in msg:
+        msg += " (or install the timer once: sudo antigravity-unlock dnspin autopin install)"
+    if not quiet:
+        print(f"  {'OK' if code == 0 else 'ERROR'}: {msg}")
+    return 0 if code == 0 else 1
+
+
+def dnspin_autopin_cmd(action, interval=None, cli_path=None):
+    action = action or "status"
+
+    if action == "install":
+        command = [os.path.abspath(cli_path), *SYNC_ARGS] if cli_path else None
+        ok, msg = install_autopin(
+            DEFAULT_INTERVAL_SECONDS if interval is None else interval,
+            command=command,
+        )
+        print(f"  {'OK' if ok else 'ERROR'}: {msg}")
+        if ok:
+            print("  The refresh runs as root on a timer; no sudo is needed later.")
+            print("  Check it with: antigravity-unlock dnspin autopin status")
+        return 0 if ok else 1
+
+    if action in ("remove", "uninstall"):
+        ok, msg = remove_autopin()
+        print(f"  {'OK' if ok else 'ERROR'}: {msg}")
+        return 0 if ok else 1
+
+    status = autopin_status()
+    print(f"  Platform:  {status['platform']}")
+    print(f"  Installed: {'Yes' if status['installed'] else 'No'}")
+    print(f"  Active:    {'Yes' if status['active'] else 'No'}")
+    if status.get("interval"):
+        minutes = status["interval"] / 60
+        pretty = f"{minutes:g} min" if minutes >= 1 else f"{status['interval']}s"
+        print(f"  Interval:  {status['interval']}s ({pretty})")
+    if status.get("path"):
+        print(f"  Path:      {status['path']}")
+    if status.get("detail"):
+        print(f"  Detail:    {status['detail']}")
+    return 0 if status["installed"] and status["active"] else 1
 
 
 def dnspin_test_cmd(model=None, timeout=DNSPIN_PROBE_TIMEOUT):
@@ -942,6 +1010,32 @@ def main():
         "unpin-hosts",
         help="Remove the dnspin block from /etc/hosts (needs sudo)",
     )
+    dnspin_auto = dnspin_sub.add_parser(
+        "autopin",
+        help="Keep the /etc/hosts pin fresh with a root timer",
+    )
+    dnspin_auto_sub = dnspin_auto.add_subparsers(
+        dest="autopin_subcommand", help="Autopin actions"
+    )
+    auto_install = dnspin_auto_sub.add_parser(
+        "install", help="Install and start the refresh timer (needs sudo)"
+    )
+    auto_install.add_argument(
+        "--interval", type=int, default=DEFAULT_INTERVAL_SECONDS,
+        help=f"Refresh interval in seconds (default: {DEFAULT_INTERVAL_SECONDS})",
+    )
+    auto_install.add_argument(
+        "--cli", default=None,
+        help="Path to the antigravity-unlock executable for the timer "
+             "(needed when running from a temporary AppImage mount)",
+    )
+    dnspin_auto_sub.add_parser("remove", help="Disable and remove the refresh timer (needs sudo)")
+    dnspin_auto_sub.add_parser("status", help="Show whether the refresh timer is installed")
+    dnspin_sub.add_parser(
+        "sync-hosts",
+        help="Refresh /etc/hosts from live relays only if they changed "
+             "(root; used by the timer)",
+    )
 
     # Command: pin
     pin_parser = subparsers.add_parser("pin", help="Version pinning management")
@@ -1306,6 +1400,14 @@ def main():
             sys.exit(dnspin_pin_hosts_cmd())
         elif sub == "unpin-hosts":
             sys.exit(dnspin_unpin_hosts_cmd())
+        elif sub == "autopin":
+            sys.exit(dnspin_autopin_cmd(
+                getattr(args, "autopin_subcommand", None) or "status",
+                interval=getattr(args, "interval", None),
+                cli_path=getattr(args, "cli", None),
+            ))
+        elif sub == "sync-hosts":
+            sys.exit(dnspin_sync_hosts_cmd())
         else:
             sys.exit(dnspin_set_enabled(False))
 

@@ -327,6 +327,8 @@ def render_hosts_pin(content, pinned):
         HOSTS_MARKER_BEGIN,
         "# Managed by antigravity-unlock dnspin. Refresh with:",
         "#   sudo antigravity-unlock dnspin pin-hosts",
+        "# Keep it fresh automatically with:",
+        "#   sudo antigravity-unlock dnspin autopin install",
         "# Remove with:",
         "#   sudo antigravity-unlock dnspin unpin-hosts",
     ]
@@ -422,6 +424,44 @@ def remove_hosts_pin(path=None):
     except OSError as e:
         return False, f"cannot write {path}: {e}"
     return True, f"removed the dnspin block from {path}"
+
+
+def sync_hosts_pin(path=None, resolve=None):
+    # Refresh the marked hosts block from the currently live relays.
+    #
+    # Returns (code, message): 0 means the pin is usable (changed or already
+    # current), 1 means it could not be written, 2 means there is no live relay
+    # and no previous pin. Hosts with no live relay keep their previous address,
+    # so one flaky provider does not take down the other two.
+    path = path or hosts_path()
+    current = parse_hosts_pin(path=path)
+    resolve = resolve or resolve_pin
+    try:
+        status = resolve()
+    except Exception as e:  # noqa: BLE001 - a network failure is not a crash
+        return 1, f"relay resolution failed: {e}"
+
+    chosen = pin_ips(status)
+    merged = {}
+    for host in PIN_HOSTS:
+        ips = chosen.get(host) or current.get(host) or []
+        if ips:
+            merged[host] = ips
+
+    if not merged:
+        return 2, "no live relay and no previous pin; nothing to write"
+
+    if not any(chosen.values()) and current:
+        return 0, f"no live relay; keeping the previous pin in {path}"
+
+    def first(mapping, host):
+        return (mapping.get(host) or [None])[0]
+
+    if all(first(current, host) == first(merged, host) for host in PIN_HOSTS):
+        return 0, f"pin in {path} is already current"
+
+    ok, msg = write_hosts_pin(merged, path=path)
+    return (0 if ok else 1), msg
 
 
 # --------------------------------------------------------------------------

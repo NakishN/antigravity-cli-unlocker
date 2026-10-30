@@ -343,24 +343,56 @@ def check_hosts():
     checks = []
     dnspin_pin = parse_hosts_pin()
     if dnspin_pin:
+        from antigravity_unlock.dnspin_timer import autopin_status
+
+        auto = autopin_status()
+        auto_active = auto["installed"] and auto["active"]
         dead = []
         for host, ips in dnspin_pin.items():
             if not any(probe_relay(host, ip, timeout=3.0) is not None for ip in ips[:2]):
                 dead.append(host)
         if dead:
+            if auto_active:
+                hint = (
+                    f"the auto-refresh timer is active and retries every "
+                    f"{auto.get('interval') or 'N'}s; if this persists, check "
+                    f"'journalctl -u antigravity-unlocker-dnspin.service -n 30'"
+                )
+            elif auto["installed"]:
+                hint = (
+                    f"the auto-refresh timer is installed but inactive "
+                    f"({auto['detail'] or 'unknown reason'}); reinstall it: "
+                    f"sudo antigravity-unlock dnspin autopin install"
+                )
+            else:
+                hint = (
+                    "sudo antigravity-unlock dnspin pin-hosts, then keep it fresh "
+                    "with: sudo antigravity-unlock dnspin autopin install"
+                )
             checks.append(_check(
                 "hosts pin", WARN,
                 f"the dnspin /etc/hosts pin has dead relay(s): {', '.join(dead)}. "
                 f"A bare agy will fail until the pin is refreshed.",
-                "sudo antigravity-unlock dnspin pin-hosts",
+                hint,
             ))
         else:
             summary = ", ".join(f"{h.split('.')[0]}={ips[0]}" for h, ips in dnspin_pin.items() if ips)
-            checks.append(_check(
-                "hosts pin", OK,
+            message = (
                 f"dnspin /etc/hosts pin is live: {summary}. This is what makes a "
-                f"bare agy use the relays.",
-            ))
+                f"bare agy use the relays."
+            )
+            if auto_active:
+                message += " The auto-refresh timer is active."
+            if auto["installed"] and not auto["active"]:
+                checks.append(_check(
+                    "hosts pin", WARN,
+                    message + " The auto-refresh timer is installed but inactive "
+                    f"({auto['detail'] or 'unknown reason'}), so the pin will go "
+                    f"stale silently.",
+                    "sudo antigravity-unlock dnspin autopin install",
+                ))
+            else:
+                checks.append(_check("hosts pin", OK, message))
 
     if pins:
         listing = "; ".join(line for _, line, _ in pins[:3])
