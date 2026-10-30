@@ -303,7 +303,10 @@ class TestCliDispatch(unittest.TestCase):
                 cli.main()
         self.assertEqual(raised.exception.code, 0)
         self.assertEqual(captured["interval"], 600)
-        self.assertEqual(captured["command"], ["/opt/antigravity-unlock", "dnspin", "sync-hosts"])
+        self.assertEqual(
+            captured["command"],
+            [os.path.abspath("/opt/antigravity-unlock"), "dnspin", "sync-hosts"],
+        )
 
     def test_sync_hosts_exit_code_follows_the_sync_result(self):
         argv = ["antigravity-unlock", "dnspin", "sync-hosts"]
