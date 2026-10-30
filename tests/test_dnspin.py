@@ -247,6 +247,24 @@ class TestSyncHostsPin(unittest.TestCase):
         self.assertEqual(pin[daily], ["9.9.9.9"])
         self.assertEqual(pin[cloud], ["2.2.2.2"])
 
+    def test_live_current_relay_is_kept_even_if_not_the_fastest(self):
+        import tempfile
+
+        daily = "daily-cloudcode-pa.googleapis.com"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp, {daily: ["1.1.1.1"]})
+            status = {daily: {"chosen": [
+                {"ip": "9.9.9.9", "latency": 0.1},
+                {"ip": "1.1.1.1", "latency": 0.9},
+            ]}}
+            with patch.object(dnspin, "write_hosts_pin") as write:
+                code, message = dnspin.sync_hosts_pin(path=path, resolve=lambda: status)
+            pin = dnspin.parse_hosts_pin(path=path)
+        self.assertEqual(code, 0)
+        self.assertIn("already current", message)
+        self.assertEqual(pin[daily], ["1.1.1.1"])
+        write.assert_not_called()
+
     def test_unchanged_pin_does_not_rewrite_the_file(self):
         import tempfile
 

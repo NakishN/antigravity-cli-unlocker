@@ -444,9 +444,17 @@ def sync_hosts_pin(path=None, resolve=None):
     chosen = pin_ips(status)
     merged = {}
     for host in PIN_HOSTS:
-        ips = chosen.get(host) or current.get(host) or []
-        if ips:
-            merged[host] = ips
+        current_ips = current.get(host) or []
+        live_ips = chosen.get(host) or []
+        if current_ips and current_ips[0] in live_ips:
+            # Keep the address that is already pinned: the relay list is
+            # ordered by latency, so blindly taking live_ips[0] rewrites the
+            # file every tick even though the current pin is still healthy.
+            merged[host] = current_ips
+        elif live_ips:
+            merged[host] = live_ips
+        elif current_ips:
+            merged[host] = current_ips
 
     if not merged:
         return 2, "no live relay and no previous pin; nothing to write"
